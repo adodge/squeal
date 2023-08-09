@@ -84,7 +84,7 @@ class Queue:
         self,
         backend_instance_or_class: Union[Backend, Type[Backend]],
         *backend_args,
-        **backend_kwargs
+        **backend_kwargs,
     ):
         self.default_timeout: int = backend_kwargs.pop(
             "default_timeout", DEFAULT_TIMEOUT
@@ -169,7 +169,7 @@ class MonoQueue(Queue):
         self,
         backend_instance_or_class: Union[Backend, Type[Backend]],
         *backend_args,
-        **backend_kwargs
+        **backend_kwargs,
     ):
         self.topic = backend_kwargs.pop("topic", 0)
         super().__init__(backend_instance_or_class, *backend_args, **backend_kwargs)
@@ -205,4 +205,4 @@ class MonoQueue(Queue):
         return super().size(self.topic)
 
 
-__all__ = ["Queue", "MonoQueue", "Message", "QueueEmpty"]
+__all__ = ["Queue", "MonoQueue", "Message", "QueueEmpty", "Backend", "PAYLOAD_MAX_SIZE"]

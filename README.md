@@ -1,6 +1,8 @@
 # `squeal`: SQL-Backed Message Queue
 
-A library implementing a message queue using a relational database as the storage backend.  
+A library implementing a message queue using a relational database as the storage backend.
+
+**Note**: This is an alpha version.  The interface is unstable.  Feel free to try it out, but be sure to pin the version, and keep an eye out for changes here.
 
 ## Why `squeal`?
 

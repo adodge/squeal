@@ -150,15 +150,15 @@ mark this message as completed and remove it from the queue
 mark this message failed and release it for another consumer to pick up
 
 # TODO
-* store the `acquire_timeout` per message
-* allow a message to be `put` with a delay before it's available (add a `delivery_timestamp` column)
-* keep track of failure count for each message and implement exponential backoff
-* ttl for messages
-* a dead letter queue for messages that can't be delivered
-* `.getmany` method to get a batch of messages at a time, possibly from multiple topics
-* message priority (maybe just implemented as a wrapper around multiple topics)
-* Do some benchmarking and add indices
-* raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
+* [x] allow a message to be `put` with a delay before it's available (add a `delivery_timestamp` column)
+* [ ] keep track of failure count for each message and implement exponential backoff
+* [ ] ttl for messages
+* [x] store the `acquire_timeout` per message
+* [ ] a dead letter queue for messages that can't be delivered
+* [ ] message priority (maybe just implemented as a wrapper around multiple topics)
+* [ ] `.getmany` method to get a batch of messages at a time, possibly from multiple topics
+* [ ] raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
+* [ ] Do some benchmarking and add indices
 
 # Contributing
 

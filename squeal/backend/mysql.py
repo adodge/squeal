@@ -4,33 +4,70 @@ from typing import List, Tuple
 from squeal import Message, QueueEmpty
 from ..squeal import Backend, PAYLOAD_MAX_SIZE
 
+# Create a table to store queue items
+# format args:
+#   name -> table name
+#   size -> max message size (bytes)
 SQL_CREATE = """
 CREATE TABLE IF NOT EXISTS {name} (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     topic INT UNSIGNED NOT NULL,
     owner_id INT UNSIGNED NULL,
+    delivery_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     acquire_time DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     payload VARBINARY({size}),
     PRIMARY KEY (id)
 )
 """
+
+# Destroy the table
+# format args:
+#   name -> table name
 SQL_DROP = "DROP TABLE IF EXISTS {name}"
-SQL_INSERT = "INSERT INTO {name} (payload, topic) VALUES (%s, %s)"
+
+# Insert a row into the queue
+# format args:
+#   name -> table name
+# sql substitution args:
+# * payload
+# * topic
+# * delay (seconds)
+SQL_INSERT = "INSERT INTO {name} (payload, topic, delivery_time) VALUES (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME))"
+
+# Release stalled messages
+# Insert a row into the queue
+# format args:
+#   name -> table name
+# sql substitution args:
+# * topic
+# * acquire timeout (seconds)
 SQL_UPDATE = """
 UPDATE {name} SET owner_id=NULL
 WHERE owner_id IS NOT NULL AND topic=%s
     AND TIMESTAMPDIFF(SECOND, acquire_time, NOW()) > %s
 """
+
+# Acquire a task
 SQL_UPDATE_2 = "UPDATE {name} SET owner_id=%s WHERE id=%s"
+
+# Release a task
 SQL_UPDATE_3 = "UPDATE {name} SET owner_id=NULL WHERE owner_id=%s AND id=%s"
+
+# Find a task to acquire
 SQL_SELECT = """
 SELECT id, owner_id, payload FROM {name}
-    WHERE owner_id IS NULL AND topic=%s
+    WHERE owner_id IS NULL AND topic=%s AND delivery_time <= CURRENT_TIME
     ORDER BY id
     LIMIT 1 FOR UPDATE SKIP LOCKED;
 """
+
+# Finish a task
 SQL_DELETE = "DELETE FROM {name} WHERE id=%s"
+
+# Count tasks in topic
 SQL_COUNT = "SELECT count(1) FROM {name} WHERE topic=%s AND owner_id IS NULL"
+
+# Count tasks in all topics
 SQL_COUNT_2 = "SELECT topic, count(*) FROM {name} WHERE owner_id IS NULL GROUP BY topic"
 
 
@@ -59,9 +96,10 @@ class MySQLBackend(Backend):
             self.connection.commit()
 
     def put(self, item: bytes, topic: int) -> None:
+        delay_seconds = 0
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(SQL_INSERT.format(name=self.queue_table), args=(item, topic))
+            cur.execute(SQL_INSERT.format(name=self.queue_table), args=(item, topic, delay_seconds))
             self.connection.commit()
 
     def release_stalled_tasks(self, topic: int) -> int:

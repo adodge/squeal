@@ -14,32 +14,23 @@ CREATE TABLE IF NOT EXISTS {name} (
     PRIMARY KEY (id)
 )
 """
-
 SQL_DROP = "DROP TABLE IF EXISTS {name}"
-
 SQL_INSERT = "INSERT INTO {name} (payload, topic) VALUES (%s, %s)"
-
 SQL_UPDATE = """
 UPDATE {name} SET owner_id=NULL
 WHERE owner_id IS NOT NULL AND topic=%s
     AND TIMESTAMPDIFF(SECOND, acquire_time, NOW()) > %s
 """
-
 SQL_UPDATE_2 = "UPDATE {name} SET owner_id=%s WHERE id=%s"
-
+SQL_UPDATE_3 = "UPDATE {name} SET owner_id=NULL WHERE owner_id=%s AND id=%s"
 SQL_SELECT = """
 SELECT id, owner_id, payload FROM {name}
     WHERE owner_id IS NULL AND topic=%s
     ORDER BY id
     LIMIT 1 FOR UPDATE SKIP LOCKED;
 """
-
 SQL_DELETE = "DELETE FROM {name} WHERE id=%s"
-
-SQL_UPDATE_3 = "UPDATE {name} SET owner_id=NULL WHERE owner_id=%s AND id=%s"
-
 SQL_COUNT = "SELECT count(1) FROM {name} WHERE topic=%s AND owner_id IS NULL"
-
 SQL_COUNT_2 = "SELECT topic, count(*) FROM {name} WHERE owner_id IS NULL GROUP BY topic"
 
 

@@ -150,15 +150,15 @@ mark this message as completed and remove it from the queue
 mark this message failed and release it for another consumer to pick up
 
 # TODO
+* store the `acquire_timeout` per message
 * allow a message to be `put` with a delay before it's available (add a `delivery_timestamp` column)
 * keep track of failure count for each message and implement exponential backoff
 * ttl for messages
-* store the `acquire_timeout` per message
 * a dead letter queue for messages that can't be delivered
-* message priority (maybe just implemented as a wrapper around multiple topics)
 * `.getmany` method to get a batch of messages at a time, possibly from multiple topics
-* raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
+* message priority (maybe just implemented as a wrapper around multiple topics)
 * Do some benchmarking and add indices
+* raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
 
 # Contributing
 
@@ -170,11 +170,11 @@ Please use `black` to format your code.
 
 ## Running tests
 
-The tests assume you have a mysql instance running locally.  The authentication can be adjusted with envvars, but the defaults are:
+The tests assume you have a mysql instance running locally.  The connection can be adjusted with envvars, but the defaults are:
 
 ```python3
 SQUEAL_TEST_HOSTNAME = os.environ.get("SQUEAL_TEST_HOSTNAME", "localhost")
-SQUEAL_TEST_PORT = os.environ.get("SQUEAL_TEST_PORT", "3306")
+SQUEAL_TEST_PORT     = os.environ.get("SQUEAL_TEST_PORT", "3306")
 SQUEAL_TEST_USERNAME = os.environ.get("SQUEAL_TEST_USERNAME", "root")
 SQUEAL_TEST_PASSWORD = os.environ.get("SQUEAL_TEST_PASSWORD", "password")
 SQUEAL_TEST_DATABASE = os.environ.get("SQUEAL_TEST_DATABASE", "test")

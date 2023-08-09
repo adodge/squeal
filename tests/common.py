@@ -32,10 +32,10 @@ def temporary_name():
 
 class TemporaryMySQLBackend(MySQLBackend):
     def __init__(self, **kwargs):
-        if 'connection' not in kwargs:
-            kwargs['connection'] = get_connection()
-        if 'prefix' not in kwargs:
-            kwargs['prefix'] = temporary_name()
+        if "connection" not in kwargs:
+            kwargs["connection"] = get_connection()
+        if "prefix" not in kwargs:
+            kwargs["prefix"] = temporary_name()
         super().__init__(**kwargs)
 
     def __enter__(self):

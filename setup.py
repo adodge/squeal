@@ -9,5 +9,5 @@ setup(
     author_email="alexdodge@gmail.com",
     # url=
     license=open("LICENSE").read(),
-    packages=find_packages(exclude=('tests',))
+    packages=find_packages(exclude=("tests",)),
 )

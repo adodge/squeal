@@ -6,7 +6,7 @@ from .common import *
 
 class TestMySQLBackend(TestCase):
     def test_release_stalled(self):
-        with TemporaryMySQLBackend(acquire_timeout=1) as bk:
+        with TemporaryMySQLBackend(visibility_timeout=1) as bk:
             bk.put(b"test_release_stalled", topic=1)
 
             x = bk.get(topic=1)
@@ -20,7 +20,7 @@ class TestMySQLBackend(TestCase):
             self.assertEqual(b"test_release_stalled", y.payload)
 
     def test_ack(self):
-        with TemporaryMySQLBackend(acquire_timeout=1) as bk:
+        with TemporaryMySQLBackend(visibility_timeout=1) as bk:
             bk.put(b"test_ack", topic=1)
 
             x = bk.get(topic=1)
@@ -34,7 +34,7 @@ class TestMySQLBackend(TestCase):
                 bk.get(topic=1)
 
     def test_nack(self):
-        with TemporaryMySQLBackend(acquire_timeout=1) as bk:
+        with TemporaryMySQLBackend(visibility_timeout=1) as bk:
             bk.put(b"test_ack", topic=1)
 
             x = bk.get(topic=1)
@@ -49,7 +49,7 @@ class TestMySQLBackend(TestCase):
             self.assertIsNotNone(z)
 
     def test_context_manager(self):
-        with TemporaryMySQLBackend(acquire_timeout=1) as bk:
+        with TemporaryMySQLBackend(visibility_timeout=1) as bk:
             bk.put(b"test_ack", topic=1)
 
             with bk.get(topic=1) as task:

@@ -1,5 +1,5 @@
 import random
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from squeal import Message, QueueEmpty
 from ..squeal import Backend, PAYLOAD_MAX_SIZE
@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS {name} (
     topic INT UNSIGNED NOT NULL,
     owner_id INT UNSIGNED NULL,
     delivery_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    visibility_timeout INT UNSIGNED NOT NULL,
     acquire_time DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     payload VARBINARY({size}),
     PRIMARY KEY (id)
@@ -32,7 +33,8 @@ SQL_DROP = "DROP TABLE IF EXISTS {name}"
 # * payload
 # * topic
 # * delay (seconds)
-SQL_INSERT = "INSERT INTO {name} (payload, topic, delivery_time) VALUES (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME))"
+# * visibility timeout (seconds)
+SQL_INSERT = "INSERT INTO {name} (payload, topic, delivery_time, visibility_timeout) VALUES (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME), %s)"
 
 # Release stalled messages
 # Insert a row into the queue
@@ -40,11 +42,10 @@ SQL_INSERT = "INSERT INTO {name} (payload, topic, delivery_time) VALUES (%s, %s,
 #   name -> table name
 # sql substitution args:
 # * topic
-# * acquire timeout (seconds)
 SQL_UPDATE = """
 UPDATE {name} SET owner_id=NULL
 WHERE owner_id IS NOT NULL AND topic=%s
-    AND TIMESTAMPDIFF(SECOND, acquire_time, NOW()) > %s
+    AND TIMESTAMPDIFF(SECOND, acquire_time, NOW()) > visibility_timeout
 """
 
 # Acquire a task
@@ -72,7 +73,7 @@ SQL_COUNT_2 = "SELECT topic, count(*) FROM {name} WHERE owner_id IS NULL GROUP B
 
 
 class MySQLBackend(Backend):
-    def __init__(self, connection, prefix: str, acquire_timeout: int, *args, **kwargs):
+    def __init__(self, connection, prefix: str, visibility_timeout: Optional[int] = None, *args, **kwargs):
         """
         :param connection: https://peps.python.org/pep-0249/#connection-objects
         """
@@ -80,7 +81,7 @@ class MySQLBackend(Backend):
         self.connection = connection
         self.prefix = prefix
         self.queue_table = f"{self.prefix}_queue"
-        self.acquire_timeout = acquire_timeout
+        self.visibility_timeout = visibility_timeout
         self.owner_id = random.randint(0, 2**32 - 1)
 
     def create(self) -> None:
@@ -96,10 +97,12 @@ class MySQLBackend(Backend):
             self.connection.commit()
 
     def put(self, item: bytes, topic: int) -> None:
+        if self.visibility_timeout is None:
+            raise RuntimeError
         delay_seconds = 0
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(SQL_INSERT.format(name=self.queue_table), args=(item, topic, delay_seconds))
+            cur.execute(SQL_INSERT.format(name=self.queue_table), args=(item, topic, delay_seconds, self.visibility_timeout))
             self.connection.commit()
 
     def release_stalled_tasks(self, topic: int) -> int:
@@ -107,7 +110,7 @@ class MySQLBackend(Backend):
             self.connection.begin()
             cur.execute(
                 SQL_UPDATE.format(name=self.queue_table),
-                args=(topic, self.acquire_timeout),
+                args=(topic,),
             )
             rows = cur.rowcount
             self.connection.commit()

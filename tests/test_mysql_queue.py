@@ -5,7 +5,7 @@ from .common import *
 
 class TestMySQLQueue(TestCase):
     def test_queue_topics_dont_interfere(self):
-        with TemporaryMySQLBackend(acquire_timeout=100) as bk:
+        with TemporaryMySQLBackend(visibility_timeout=100) as bk:
             q = Queue(bk)
             q.put(b"a", topic=1)
 
@@ -18,7 +18,7 @@ class TestMySQLQueue(TestCase):
             self.assertIsNotNone(x)
 
     def test_queue_topics(self):
-        with TemporaryMySQLBackend(acquire_timeout=100) as bk:
+        with TemporaryMySQLBackend(visibility_timeout=100) as bk:
             q = Queue(bk)
             q.put(b"a", topic=1)
             q.put(b"a", topic=2)

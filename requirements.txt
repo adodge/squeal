@@ -2,3 +2,4 @@ PyMySQL
 cryptography
 petname
 pytest
+black

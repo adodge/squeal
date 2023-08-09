@@ -158,6 +158,7 @@ mark this message failed and release it for another consumer to pick up
 * message priority (maybe just implemented as a wrapper around multiple topics)
 * `.getmany` method to get a batch of messages at a time, possibly from multiple topics
 * raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
+* Do some benchmarking and add indices
 
 # Contributing
 

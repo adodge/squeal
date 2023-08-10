@@ -14,12 +14,12 @@ class TestQueue(TestCase):
     def test_get_nowait(self):
         q = Queue(LocalBackend(), timeout=-1)
         with self.assertRaises(QueueEmpty):
-            x = q.get_nowait(topic=1)
+            q.get_nowait(topic=1)
 
     def test_timeout(self):
         q = Queue(LocalBackend(), timeout=1, poll_interval=0.1)
         with self.assertRaises(QueueEmpty):
-            x = q.get(topic=1)
+            q.get(topic=1)
 
     def test_delay(self):
         q = Queue(LocalBackend(), delay=1)

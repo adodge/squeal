@@ -10,7 +10,7 @@ A library implementing a message queue using a relational database as the storag
 
 ## Why not `squeal`?
 
-You might not need a message queue at all.  _Don't queue it, just do it._  In a world where you can spin up as many compute resources as you want, on demand, and pay by the second, executing a bunch of work in parallel could be almost exactly the same price as queuing it up and execuring it in serial.
+You might not need a message queue at all.  _Don't queue it, just do it._  In a world where you can spin up as many compute resources as you want, on demand, and pay by the second, executing a bunch of work in parallel could be almost exactly the same price as queuing it up and executing it in serial.
 
 If you are doing some heavy or complex message passing, this is unlikely to be a better option than a dedicated message queue, like Kafka, RabbitMQ, AWS SQS, etc.
 

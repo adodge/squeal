@@ -66,5 +66,5 @@ class TestMySQLBackend(TestCase):
             self.assertEqual(task.status, True)
 
             with self.assertRaises(QueueEmpty):
-                with bk.get(topic=1) as task:
+                with bk.get(topic=1):
                     pass

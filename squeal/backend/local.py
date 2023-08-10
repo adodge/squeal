@@ -14,6 +14,7 @@ class LocalBackend(Backend):
     """
 
     def __init__(self):
+        super().__init__()
         self.messages = []
         self.next_id = 0
         self.created = False
@@ -111,7 +112,7 @@ class LocalBackend(Backend):
 
             counts[msg["topic"]] += 1
 
-        return counts.items()
+        return list(counts.items())
 
     def size(self, topic: int) -> int:
         assert self.created

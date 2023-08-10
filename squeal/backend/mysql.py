@@ -1,5 +1,5 @@
 import random
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 from squeal import Message, QueueEmpty, Backend
 
@@ -35,7 +35,10 @@ SQL_DROP = "DROP TABLE IF EXISTS {name}"
 # * topic
 # * delay (seconds)
 # * visibility timeout (seconds)
-SQL_INSERT = "INSERT INTO {name} (payload, topic, delivery_time, visibility_timeout) VALUES (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME), %s)"
+SQL_INSERT = (
+    "INSERT INTO {name} (payload, topic, delivery_time, visibility_timeout)"
+    "VALUES (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME), %s)"
+)
 
 # Release stalled messages
 # Insert a row into the queue

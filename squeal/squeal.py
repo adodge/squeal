@@ -75,8 +75,15 @@ class Queue:
     FIFO(-ish) queue backed by a SQL table
     """
 
-    def __init__(self, backend: Backend, timeout: int = -1, poll_interval: float = 1, delay: int = 0,
-                 visibility_timeout: int = 60, auto_create: bool = True):
+    def __init__(
+        self,
+        backend: Backend,
+        timeout: int = -1,
+        poll_interval: float = 1,
+        delay: int = 0,
+        visibility_timeout: int = 60,
+        auto_create: bool = True,
+    ):
         self.timeout = timeout
         self.poll_interval = poll_interval
         self.delay = delay
@@ -112,9 +119,9 @@ class Queue:
         return self.backend.get(topic)
 
     def get(
-            self,
-            topic: int,
-            timeout: Optional[int] = None,
+        self,
+        topic: int,
+        timeout: Optional[int] = None,
     ) -> "Message":
         if timeout is None:
             timeout = self.timeout
@@ -148,7 +155,9 @@ class MonoQueue(Queue):
     @staticmethod
     def maybe_raise_superfluous_topic(topic: Optional[int]):
         if topic is not None:
-            raise RuntimeError("Trying to call a MonoQueue method with an explicit topic")
+            raise RuntimeError(
+                "Trying to call a MonoQueue method with an explicit topic"
+            )
 
     def __init__(self, *args, topic: int = 0, **kwargs):
         self.topic = topic
@@ -162,7 +171,12 @@ class MonoQueue(Queue):
         self.maybe_raise_superfluous_topic(topic)
         return super().get_nowait(self.topic)
 
-    def get(self, topic=None, timeout: Optional[int] = None, poll_interval: Optional[int] = None) -> "Message":
+    def get(
+        self,
+        topic=None,
+        timeout: Optional[int] = None,
+        poll_interval: Optional[int] = None,
+    ) -> "Message":
         self.maybe_raise_superfluous_topic(topic)
         return super().get(
             topic=self.topic, timeout=timeout, poll_interval=poll_interval

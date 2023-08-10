@@ -98,10 +98,15 @@ class MySQLBackend(Backend):
 
     def put(self, item: bytes, topic: int, delay: int, visibility_timeout: int) -> None:
         if len(item) > PAYLOAD_MAX_SIZE:
-            raise ValueError(f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {PAYLOAD_MAX_SIZE})")
+            raise ValueError(
+                f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {PAYLOAD_MAX_SIZE})"
+            )
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(SQL_INSERT.format(name=self.queue_table), args=(item, topic, delay, visibility_timeout))
+            cur.execute(
+                SQL_INSERT.format(name=self.queue_table),
+                args=(item, topic, delay, visibility_timeout),
+            )
             self.connection.commit()
 
     def release_stalled_tasks(self, topic: int) -> int:

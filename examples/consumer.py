@@ -1,22 +1,16 @@
 import pymysql
-import squeal
+from squeal import MySQLBackend, Queue
 
 conn = pymysql.connect(
     host="localhost",
-    port=3306,
     user="root",
     password="password",
     database="test",
 )
 
-queue = squeal.Queue(
-    squeal.MySQLBackend,
-    connection=conn,
-    prefix="squeal",
-    acquire_timeout=60,
-)
+queue = Queue(backend=MySQLBackend(connection=conn, prefix="squeal"))
 
 while True:
-    msg = queue.get(topic=1)
-    print("Processed:", msg.payload)
-    msg.ack()
+    with queue.get(topic=1) as msg:
+        print("Dequeue:", msg.payload)
+        msg.ack()

@@ -1,33 +1,20 @@
-import datetime
 import pymysql
-import squeal
+from squeal import MySQLBackend, Queue
 import time
 
 conn = pymysql.connect(
     host="localhost",
-    port=3306,
     user="root",
     password="password",
     database="test",
 )
 
-queue = squeal.Queue(
-    squeal.MySQLBackend,
-    connection=conn,
-    prefix="squeal",
-    acquire_timeout=60,
-)
+queue = Queue(backend=MySQLBackend(connection=conn, prefix="squeal"))
 
-print("Creating queue")
-queue.create()
-
-try:
-    while True:
-        msg = datetime.datetime.now().isoformat().encode("utf-8")
-        queue.put(msg, topic=1)
-        print("Putting:", msg)
-        time.sleep(0.1)
-
-except KeyboardInterrupt:
-    print("Destroying queue")
-    queue.destroy()
+i = 0
+while True:
+    msg = str(i)
+    queue.put(msg.encode("utf-8"), topic=1)
+    print("Enqueue:", msg)
+    i += 1
+    time.sleep(0.1)

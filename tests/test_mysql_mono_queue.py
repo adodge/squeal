@@ -47,7 +47,7 @@ class TestMySQLMonoQueue(TestCase):
 
     def test_queue_nack(self):
         with TemporaryMySQLBackend() as bk:
-            q = MonoQueue(bk, visibility_timeout=100)
+            q = MonoQueue(bk, visibility_timeout=100, failure_base_delay=0)
             q.put(b"test_queue_nack")
 
             x = q.get_nowait()

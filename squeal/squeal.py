@@ -1,75 +1,6 @@
-import abc
 import time
 from typing import Tuple, List, Optional
-
-
-class QueueEmpty(BaseException):
-    pass
-
-
-class Backend(abc.ABC):
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def create(self) -> None:
-        raise NotImplementedError
-
-    def destroy(self) -> None:
-        raise NotImplementedError
-
-    def put(
-        self, payload: bytes, topic: int, delay: int, visibility_timeout: int
-    ) -> None:
-        raise NotImplementedError
-
-    def release_stalled_tasks(self, topic: int) -> int:
-        raise NotImplementedError
-
-    def get(self, topic: int) -> "Message":
-        raise NotImplementedError
-
-    def ack(self, task_id: int) -> None:
-        raise NotImplementedError
-
-    def nack(self, task_id: int, delay: int) -> None:
-        raise NotImplementedError
-
-    def topics(self) -> List[Tuple[int, int]]:
-        raise NotImplementedError
-
-    def size(self, topic: int) -> int:
-        raise NotImplementedError
-
-
-class Message:
-    def __init__(self, payload: bytes, idx: int, backend: Backend):
-        self.payload = payload
-        self.idx = idx
-        self.backend = backend
-        self.status = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.status is None:
-            self.nack()
-
-    def ack(self):
-        if self.status is not None:
-            raise RuntimeError(
-                "Trying to ack a Message that's already been acked or nacked"
-            )
-        self.status = True
-        self.backend.ack(self.idx)
-
-    def nack(self):
-        if self.status is not None:
-            raise RuntimeError(
-                "Trying to nack a Message that's already been acked or nacked"
-            )
-        self.status = False
-        self.backend.nack(self.idx, delay=0)  # TODO parameterize this delay
+from squeal.backend.base import Backend, Message, QueueEmpty
 
 
 class Queue:
@@ -82,21 +13,25 @@ class Queue:
         backend: Backend,
         timeout: int = -1,
         poll_interval: float = 1,
-        delay: int = 0,
+        new_message_delay: int = 0,
+        failure_base_delay: int = 1,
         visibility_timeout: int = 60,
         auto_create: bool = True,
     ):
         self.timeout = timeout
         self.poll_interval = poll_interval
-        self.delay = delay
+        self.new_message_delay = new_message_delay
+        self.failure_base_delay = failure_base_delay
         self.visibility_timeout = visibility_timeout
 
         self.backend = backend
 
         if self.poll_interval <= 0:
             raise RuntimeError("Poll interval must be positive")
-        if self.delay < 0:
-            raise RuntimeError("Poll interval must be non-negative")
+        if self.new_message_delay < 0:
+            raise RuntimeError("Delay must be non-negative")
+        if self.failure_base_delay < 0:
+            raise RuntimeError("Delay must be non-negative")
         if self.visibility_timeout <= 0:
             raise RuntimeError("Visibility timeout must be positive")
 
@@ -109,8 +44,15 @@ class Queue:
     def destroy(self) -> None:
         self.backend.destroy()
 
-    def put(self, item: bytes, topic: int) -> None:
-        self.backend.put(item, topic, self.delay, self.visibility_timeout)
+    def put(self, item: bytes, topic: int, priority: int = 0) -> None:
+        self.backend.put(
+            item,
+            topic,
+            priority,
+            self.new_message_delay,
+            self.failure_base_delay,
+            self.visibility_timeout,
+        )
 
     def get_nowait(self, topic: int) -> "Message":
         try:
@@ -120,28 +62,46 @@ class Queue:
                 raise QueueEmpty()
         return self.backend.get(topic)
 
-    def get(
-        self,
-        topic: int,
-        timeout: Optional[int] = None,
-    ) -> "Message":
-        if timeout is None:
-            timeout = self.timeout
-
-        if timeout == 0:
+    def get(self, topic: int) -> "Message":
+        if self.timeout == 0:
             return self.get_nowait(topic)
 
-        never_timeout = timeout < 0
+        never_timeout = self.timeout < 0
 
         t0 = time.time()
         while True:
             t1 = time.time()
-            if not never_timeout and timeout <= t1 - t0:
+            if not never_timeout and self.timeout <= t1 - t0:
                 raise QueueEmpty()
             try:
                 return self.get_nowait(topic)
             except QueueEmpty:
                 pass
+            time.sleep(self.poll_interval)
+
+    def batch_get_nowait(self, topic: int, size: int) -> List["Message"]:
+        out = self.backend.batch_get(topic, size)
+        if len(out) < size:
+            if self.backend.release_stalled_tasks(topic) == 0:
+                return out
+        out.extend(self.backend.batch_get(topic, size - len(out)))
+        return out
+
+    def batch_get(self, topic: int, size: int) -> List["Message"]:
+        if self.timeout == 0:
+            return self.batch_get_nowait(topic, size)
+
+        never_timeout = self.timeout < 0
+        out = []
+
+        t0 = time.time()
+        while True:
+            t1 = time.time()
+            if not never_timeout and self.timeout <= t1 - t0:
+                return out
+            out.extend(self.batch_get_nowait(topic, size - len(out)))
+            if len(out) == size:
+                return out
             time.sleep(self.poll_interval)
 
     def topics(self) -> List[Tuple[int, int]]:
@@ -178,10 +138,9 @@ class MonoQueue(Queue):
     def get(
         self,
         topic=None,
-        timeout: Optional[int] = None,
     ) -> "Message":
         self.maybe_raise_superfluous_topic(topic)
-        return super().get(topic=self.topic, timeout=timeout)
+        return super().get(topic=self.topic)
 
     def topics(self) -> List[Tuple[int, int]]:
         raise NotImplementedError
@@ -191,4 +150,4 @@ class MonoQueue(Queue):
         return super().size(self.topic)
 
 
-__all__ = ["Queue", "MonoQueue", "Message", "QueueEmpty", "Backend"]
+__all__ = ["Queue", "MonoQueue", "QueueEmpty"]

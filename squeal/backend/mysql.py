@@ -1,7 +1,6 @@
 import random
 from typing import List, Tuple
-
-from squeal import Message, QueueEmpty, Backend
+from .base import Backend, Message, QueueEmpty
 
 PAYLOAD_MAX_SIZE = 1023
 
@@ -13,9 +12,12 @@ SQL_CREATE = """
 CREATE TABLE IF NOT EXISTS {name} (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     topic INT UNSIGNED NOT NULL,
+    priority INT UNSIGNED NOT NULL,
     owner_id INT UNSIGNED NULL,
     delivery_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     visibility_timeout INT UNSIGNED NOT NULL,
+    failure_base_delay INT UNSIGNED NOT NULL,
+    failure_count INT UNSIGNED DEFAULT 0,
     acquire_time DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     payload VARBINARY({size}),
     PRIMARY KEY (id)
@@ -33,11 +35,13 @@ SQL_DROP = "DROP TABLE IF EXISTS {name}"
 # sql substitution args:
 # * payload
 # * topic
+# * priority
 # * delay (seconds)
+# * failure_base_delay (seconds)
 # * visibility timeout (seconds)
 SQL_INSERT = (
-    "INSERT INTO {name} (payload, topic, delivery_time, visibility_timeout)"
-    "VALUES (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME), %s)"
+    "INSERT INTO {name} (payload, topic, priority, delivery_time, failure_base_delay, visibility_timeout)"
+    "VALUES (%s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME), %s, %s)"
 )
 
 # Release stalled messages
@@ -53,18 +57,39 @@ WHERE owner_id IS NOT NULL AND topic=%s
 """
 
 # Acquire a task
+# format args:
+#   name -> table name
 SQL_UPDATE_2 = "UPDATE {name} SET owner_id=%s WHERE id=%s"
 
 # Release a task
-SQL_UPDATE_3 = "UPDATE {name} SET owner_id=NULL WHERE owner_id=%s AND id=%s"
+# format args:
+#   name -> table name
+# sql substitution args:
+# * owner id
+# * message id
+SQL_UPDATE_3 = """
+UPDATE {name}
+   SET owner_id=NULL,
+       delivery_time=TIMESTAMPADD(SECOND, failure_base_delay * POW(2, failure_count), CURRENT_TIME),
+       failure_count = failure_count + 1
+   WHERE owner_id=%s AND id=%s
+"""
 
 # Find a task to acquire
 SQL_SELECT = """
 SELECT id, owner_id, payload FROM {name}
-    WHERE owner_id IS NULL AND topic=%s AND delivery_time <= CURRENT_TIME
-    ORDER BY id
+    WHERE owner_id IS NULL AND topic=%s AND TIMESTAMPDIFF(SECOND, delivery_time, NOW()) >= 0
+    ORDER BY priority DESC, id ASC
     LIMIT 1 FOR UPDATE SKIP LOCKED;
 """
+
+SQL_BATCH_SELECT = """
+SELECT id, owner_id, payload FROM {name}
+    WHERE owner_id IS NULL AND topic=%s AND TIMESTAMPDIFF(SECOND, delivery_time, NOW()) >= 0
+    ORDER BY priority DESC, id ASC
+    LIMIT %s FOR UPDATE SKIP LOCKED;
+"""
+SQL_BATCH_UPDATE = "UPDATE {name} SET owner_id=%s WHERE id IN %s"
 
 # Finish a task
 SQL_DELETE = "DELETE FROM {name} WHERE id=%s"
@@ -100,7 +125,13 @@ class MySQLBackend(Backend):
             self.connection.commit()
 
     def put(
-        self, payload: bytes, topic: int, delay: int, visibility_timeout: int
+        self,
+        payload: bytes,
+        topic: int,
+        priority: int,
+        delay: int,
+        failure_base_delay: int,
+        visibility_timeout: int,
     ) -> None:
         if len(payload) > PAYLOAD_MAX_SIZE:
             raise ValueError(
@@ -110,7 +141,14 @@ class MySQLBackend(Backend):
             self.connection.begin()
             cur.execute(
                 SQL_INSERT.format(name=self.queue_table),
-                args=(payload, topic, delay, visibility_timeout),
+                args=(
+                    payload,
+                    topic,
+                    priority,
+                    delay,
+                    failure_base_delay,
+                    visibility_timeout,
+                ),
             )
             self.connection.commit()
 
@@ -144,14 +182,36 @@ class MySQLBackend(Backend):
 
         return Message(row[2], row[0], self)
 
+    def batch_get(self, topic: int, size: int) -> List["Message"]:
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+
+            cur.execute(
+                SQL_BATCH_SELECT.format(name=self.queue_table), args=(topic, size)
+            )
+
+            rows = cur.fetchall()
+            if len(rows) == 0:
+                self.connection.rollback()
+                return []
+
+            idxes = [x[0] for x in rows]
+            cur.execute(
+                SQL_BATCH_UPDATE.format(name=self.queue_table),
+                args=(self.owner_id, idxes),
+            )
+
+            self.connection.commit()
+
+        return [Message(x[2], x[0], self) for x in rows]
+
     def ack(self, task_id: int) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(SQL_DELETE.format(name=self.queue_table), args=(task_id,))
             self.connection.commit()
 
-    def nack(self, task_id: int, delay: int) -> None:
-        # TODO set delay
+    def nack(self, task_id: int) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(

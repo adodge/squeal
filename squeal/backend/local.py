@@ -1,4 +1,4 @@
-from squeal import Backend, Message, QueueEmpty
+from .base import Backend, Message, QueueEmpty
 from typing import List, Tuple
 import time
 from collections import Counter
@@ -6,11 +6,8 @@ from collections import Counter
 
 class LocalBackend(Backend):
     """
-    This is very unoptimized and is mostly intended as a reference
-    implementation of the Backend interface for testing.
-
-    Not threadsafe, either.  If you need a local queue, just use `queue` from
-    the standard library.
+    This is just a reference implementation for testing purposes.  Don't use it for anything else.  It's deliberately
+    unoptimized to make it easy to follow what it's doing.
     """
 
     def __init__(self):
@@ -26,7 +23,13 @@ class LocalBackend(Backend):
         self.created = False
 
     def put(
-        self, payload: bytes, topic: int, delay: int, visibility_timeout: int
+        self,
+        payload: bytes,
+        topic: int,
+        priority: int,
+        delay: int,
+        failure_base_delay: int,
+        visibility_timeout: int,
     ) -> None:
         assert self.created
         self.messages.append(
@@ -34,9 +37,12 @@ class LocalBackend(Backend):
                 "id": self.next_id,
                 "payload": payload,
                 "topic": topic,
+                "priority": priority,
                 "acquired": False,
                 "visibility_timeout": visibility_timeout,
                 "delivery_time": time.time() + delay,
+                "failure_base_delay": failure_base_delay,
+                "failure_count": 0,
             }
         )
         self.next_id += 1
@@ -54,12 +60,14 @@ class LocalBackend(Backend):
                 continue
 
             msg["acquired"] = False
+            msg["failure_count"] += 1
             n += 1
         return n
 
     def get(self, topic: int) -> "Message":
         assert self.created
         now = time.time()
+        self.messages.sort(key=lambda x: [-x["priority"], x["id"]])
         for msg in self.messages:
             if msg["acquired"]:
                 continue
@@ -74,6 +82,16 @@ class LocalBackend(Backend):
 
         raise QueueEmpty()
 
+    def batch_get(self, topic: int, size: int) -> List["Message"]:
+        assert self.created
+        output = []
+        while len(output) < size:
+            try:
+                output.append(self.get(topic))
+            except QueueEmpty:
+                break
+        return output
+
     def ack(self, task_id: int) -> None:
         assert self.created
         for idx, msg in enumerate(self.messages):
@@ -86,7 +104,7 @@ class LocalBackend(Backend):
             return
         self.messages.remove(idx)
 
-    def nack(self, task_id: int, delay: int) -> None:
+    def nack(self, task_id: int) -> None:
         assert self.created
         for idx, msg in enumerate(self.messages):
             if msg["id"] != task_id:
@@ -95,6 +113,8 @@ class LocalBackend(Backend):
                 continue
 
             msg["acquired"] = False
+            delay = msg["failure_base_delay"] * (2 ** msg["failure_count"])
+            msg["failure_count"] += 1
             msg["delivery_time"] = time.time() + delay
 
             break

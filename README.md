@@ -29,11 +29,7 @@ But theoretically other database libraries can be used, as long as they implemen
 (Coming soon)
 
 # TODO
-* [ ] keep track of failure count for each message and implement exponential backoff
 * [ ] ttl for messages
-* [ ] a dead letter queue for messages that can't be delivered
-* [ ] message priority (maybe just implemented as a wrapper around multiple topics)
-* [ ] `.getmany` method to get a batch of messages at a time, possibly from multiple topics
 * [ ] raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
 * [ ] Do some benchmarking and add indices
 * [ ] Refactor tests so the same set of tests are run against all backends

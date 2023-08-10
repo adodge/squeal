@@ -22,7 +22,7 @@ class TestQueue(TestCase):
             q.get(topic=1)
 
     def test_delay(self):
-        q = Queue(LocalBackend(), delay=1)
+        q = Queue(LocalBackend(), new_message_delay=1)
         q.put(b"a", topic=1)
         with self.assertRaises(QueueEmpty):
             q.get_nowait(topic=1)
@@ -72,3 +72,19 @@ class TestQueue(TestCase):
         )
         self.assertEqual(0, q.size(100))
         self.assertEqual(5, q.size(2))
+
+    def test_priority(self):
+        q = Queue(LocalBackend())
+        q.put(b"a", topic=1, priority=0)
+        q.put(b"b", topic=1, priority=1)
+
+        msg = q.get(topic=1)
+        self.assertEqual(b"b", msg.payload)
+
+    def test_batch_get(self):
+        q = Queue(LocalBackend())
+        q.put(b"a", topic=1, priority=0)
+        q.put(b"b", topic=1, priority=1)
+
+        msgs = q.batch_get_nowait(topic=1, size=2)
+        self.assertEqual(2, len(msgs))

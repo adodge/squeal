@@ -1,5 +1,5 @@
 import time
-from typing import Tuple, List, Optional
+from typing import Tuple, List
 from squeal.backend.base import Backend, Message, QueueEmpty
 
 
@@ -58,7 +58,7 @@ class Queue:
         try:
             return self.backend.get(topic)
         except QueueEmpty:
-            if self.backend.release_stalled_tasks(topic) == 0:
+            if self.backend.release_stalled_messages(topic) == 0:
                 raise QueueEmpty()
         return self.backend.get(topic)
 
@@ -82,7 +82,7 @@ class Queue:
     def batch_get_nowait(self, topic: int, size: int) -> List["Message"]:
         out = self.backend.batch_get(topic, size)
         if len(out) < size:
-            if self.backend.release_stalled_tasks(topic) == 0:
+            if self.backend.release_stalled_messages(topic) == 0:
                 return out
         out.extend(self.backend.batch_get(topic, size - len(out)))
         return out
@@ -111,43 +111,4 @@ class Queue:
         return self.backend.size(topic)
 
 
-class MonoQueue(Queue):
-    """
-    FIFO(-ish) queue backed by a SQL table, with only one topic
-    """
-
-    @staticmethod
-    def maybe_raise_superfluous_topic(topic: Optional[int]):
-        if topic is not None:
-            raise RuntimeError(
-                "Trying to call a MonoQueue method with an explicit topic"
-            )
-
-    def __init__(self, *args, topic: int = 0, **kwargs):
-        self.topic = topic
-        super().__init__(*args, **kwargs)
-
-    def put(self, item: bytes, topic=None) -> None:
-        self.maybe_raise_superfluous_topic(topic)
-        super().put(item, self.topic)
-
-    def get_nowait(self, topic=None) -> "Message":
-        self.maybe_raise_superfluous_topic(topic)
-        return super().get_nowait(self.topic)
-
-    def get(
-        self,
-        topic=None,
-    ) -> "Message":
-        self.maybe_raise_superfluous_topic(topic)
-        return super().get(topic=self.topic)
-
-    def topics(self) -> List[Tuple[int, int]]:
-        raise NotImplementedError
-
-    def size(self, topic=None) -> int:
-        self.maybe_raise_superfluous_topic(topic)
-        return super().size(self.topic)
-
-
-__all__ = ["Queue", "MonoQueue", "QueueEmpty"]
+__all__ = ["Queue"]

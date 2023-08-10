@@ -1,8 +1,7 @@
 import time
 from unittest import TestCase
-
 from squeal import QueueEmpty
-from .common import *
+from .common import TemporaryMySQLBackend
 
 
 class TestMySQLBackend(TestCase):
@@ -19,10 +18,10 @@ class TestMySQLBackend(TestCase):
 
             x = bk.get(topic=1)
             self.assertEqual(b"test_release_stalled", x.payload)
-            self.assertEqual(0, bk.release_stalled_tasks(topic=1))
+            self.assertEqual(0, bk.release_stalled_messages(topic=1))
 
             time.sleep(2)
-            self.assertEqual(1, bk.release_stalled_tasks(topic=1))
+            self.assertEqual(1, bk.release_stalled_messages(topic=1))
 
             y = bk.get(topic=1)
             self.assertEqual(b"test_release_stalled", y.payload)
@@ -43,7 +42,7 @@ class TestMySQLBackend(TestCase):
             x.ack()
 
             time.sleep(2)
-            bk.release_stalled_tasks(topic=1)
+            bk.release_stalled_messages(topic=1)
 
             with self.assertRaises(QueueEmpty):
                 bk.get(topic=1)

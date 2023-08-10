@@ -152,7 +152,7 @@ class MySQLBackend(Backend):
             )
             self.connection.commit()
 
-    def release_stalled_tasks(self, topic: int) -> int:
+    def release_stalled_messages(self, topic: int) -> int:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
@@ -235,6 +235,3 @@ class MySQLBackend(Backend):
             rows = cur.fetchall()
             self.connection.commit()
         return rows
-
-
-__all__ = ["MySQLBackend"]

@@ -47,7 +47,7 @@ class LocalBackend(Backend):
         )
         self.next_id += 1
 
-    def release_stalled_tasks(self, topic: int) -> int:
+    def release_stalled_messages(self, topic: int) -> int:
         assert self.created
         now = time.time()
         n = 0
@@ -148,6 +148,3 @@ class LocalBackend(Backend):
 
             n += 1
         return n
-
-
-__all__ = ["LocalBackend"]

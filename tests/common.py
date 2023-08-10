@@ -1,8 +1,6 @@
 import os
-
 import petname
 import pymysql
-
 from squeal import MySQLBackend
 
 SQUEAL_TEST_HOSTNAME = os.environ.get("SQUEAL_TEST_HOSTNAME", "localhost")

@@ -1,18 +1,25 @@
 # `squeal`: SQL-Backed Message Queue
 
-A library implementing a message queue using a relational database as the storage backend.
+A python library implementing a message queue using a relational database as the storage backend.
 
-**Note**: This is an alpha version.  The interface is unstable.  Feel free to try it out, but be sure to pin the version, and keep an eye out for changes here.
+**Note**: This is an alpha version.  The interface is unstable.  Feel free to try it out, though, and let me know what you think.
 
-## Why `squeal`?
+## Why?
 
-`squeal` is targeting a scenario where you already have a database set up, and you just need a relatively light message queue.  It hasn't been benchmarked, but relational databases are pretty good actually, and you might be able to achieve a surprising amount of volume using this approach.  If you're already paying to run a database, this might be cheaper than paying to run an additional message queue service, assuming you don't have to upgrade your database to meet the additional load.
+`squeal` offers a lightweight implementation of a message queue, using a backend that you probably already have as part of your infrastructure.  The basic functionality is exposed by the `squeal.Queue` object:
 
-## Why not `squeal`?
+* `create` and `destroy` the required database tables
+* `put` and `get` messages from a queue
+* a message payload is just a binary blob
+* messages have a priority, where higher-priority messages are retrieved first
+* consumers can `ack` or `nack` messages to indicate success or failure
+* if a consumer acquires a message but doesn't `ack` it, it will eventually be redelivered to another consumer
+* a message that is `nack`ed will be put back in the queue with an exponential backoff delay
+* a `Queue` object represents multiple logical queues, indicated by a message `topic`
+* topics are dynamic: they only exist as long as there's a message with that topic
+* a `Queue` can query for existing topics or the number of messages waiting in any particular topic
 
-You might not need a message queue at all.  _Don't queue it, just do it._  In a world where you can spin up as many compute resources as you want, on demand, and pay by the second, executing a bunch of work in parallel could be almost exactly the same price as queuing it up and executing it in serial.
-
-If you are doing some heavy or complex message passing, this is unlikely to be a better option than a dedicated message queue, like Kafka, RabbitMQ, AWS SQS, etc.
+`Queue` objects delegate to a `Backend` object that implements database-specific methods.  The only backend is currently the `MySQLBackend`, which wraps a `Connection` from a mysql library, like `pymysql`.
 
 ## What database backends are supported?
 
@@ -23,29 +30,33 @@ Currently, the only backend that has been tested is:
 But theoretically other database libraries can be used, as long as they implement [PEP 249 (Python Database API Specification)](https://peps.python.org/pep-0249/).  Other database engines can probably be supported with minimal effort by changing the dialect of SQL that's generated.  (That is, creating a new subclass of `Backend`)
 
 # Examples
-(Coming soon)
+Check the `examples/` directory.
 
 # API
 (Coming soon)
 
-# TODO
-* [ ] ttl for messages
-* [ ] raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
-* [ ] Do some benchmarking and add indices
-* [ ] Refactor tests so the same set of tests are run against all backends
-
 # Contributing
+
+## To-Do
+* some way of handling messages that are failing repeatedly
+* raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
+* do some benchmarking and add indices
+* refactor tests to test each backend (and queue backed by the backend) with the same battery of tests
 
 Please feel free to submit an issue to the github for bugs, comments, or feature requests.  Also feel free to fork and make a PR.
 
 ## Formatting
-
 Please use `black` to format your code.
 
 ## Running tests
+Install the dev requirements in a virtual env:
+```python3
+python3 -m venv venv
+. venv/bin/activate
+pip install -r requirements.txt
+```
 
 The tests assume you have a mysql instance running locally.  The connection can be adjusted with envvars, but the defaults are:
-
 ```python3
 SQUEAL_TEST_HOSTNAME = os.environ.get("SQUEAL_TEST_HOSTNAME", "localhost")
 SQUEAL_TEST_PORT     = os.environ.get("SQUEAL_TEST_PORT", "3306")
@@ -55,16 +66,11 @@ SQUEAL_TEST_DATABASE = os.environ.get("SQUEAL_TEST_DATABASE", "test")
 ```
 
 The easiest way to get this running is to just use docker:
-
 ```bash
 docker run --name mysql -e MYSQL_ROOT_PASSWORD=password -d -p 3306:3306 mysql:8.1.0
 ```
 
 Then the tests can be run with `pytest`:
-
 ```bash
-python3 -m venv venv
-. venv/bin/activate
-pip install -r requirements.txt
 pytest tests
 ```

@@ -1,3 +1,3 @@
-from .squeal import *
-from .backend.mysql import *
-from .backend.local import *
+from .squeal import Queue
+from .backend.base import Message, QueueEmpty
+from .backend.mysql import MySQLBackend

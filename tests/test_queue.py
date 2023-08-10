@@ -1,7 +1,7 @@
 import time
 from unittest import TestCase
 from squeal import Queue, QueueEmpty
-from squeal import LocalBackend
+from squeal.backend.local import LocalBackend
 
 
 class TestQueue(TestCase):

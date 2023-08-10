@@ -27,7 +27,7 @@ class Backend(abc.ABC):
     ) -> None:
         raise NotImplementedError
 
-    def release_stalled_tasks(self, topic: int) -> int:
+    def release_stalled_messages(self, topic: int) -> int:
         raise NotImplementedError
 
     def get(self, topic: int) -> "Message":

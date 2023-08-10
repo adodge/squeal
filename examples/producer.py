@@ -13,8 +13,7 @@ queue = Queue(backend=MySQLBackend(connection=conn, prefix="squeal"))
 
 i = 0
 while True:
-    msg = str(i)
-    queue.put(msg.encode("utf-8"), topic=1)
-    print("Enqueue:", msg)
     i += 1
+    queue.put(str(i).encode("utf-8"), topic=1)
+    print("Enqueue:", i)
     time.sleep(0.1)

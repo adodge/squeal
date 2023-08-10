@@ -24,12 +24,14 @@ class LocalBackend(Backend):
     def destroy(self) -> None:
         self.created = False
 
-    def put(self, item: bytes, topic: int, delay: int, visibility_timeout: int) -> None:
+    def put(
+        self, payload: bytes, topic: int, delay: int, visibility_timeout: int
+    ) -> None:
         assert self.created
         self.messages.append(
             {
                 "id": self.next_id,
-                "payload": item,
+                "payload": payload,
                 "topic": topic,
                 "acquired": False,
                 "visibility_timeout": visibility_timeout,

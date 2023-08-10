@@ -96,8 +96,10 @@ class MySQLBackend(Backend):
             cur.execute(SQL_DROP.format(name=self.queue_table))
             self.connection.commit()
 
-    def put(self, item: bytes, topic: int, delay: int, visibility_timeout: int) -> None:
-        if len(item) > PAYLOAD_MAX_SIZE:
+    def put(
+        self, payload: bytes, topic: int, delay: int, visibility_timeout: int
+    ) -> None:
+        if len(payload) > PAYLOAD_MAX_SIZE:
             raise ValueError(
                 f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {PAYLOAD_MAX_SIZE})"
             )
@@ -105,7 +107,7 @@ class MySQLBackend(Backend):
             self.connection.begin()
             cur.execute(
                 SQL_INSERT.format(name=self.queue_table),
-                args=(item, topic, delay, visibility_timeout),
+                args=(payload, topic, delay, visibility_timeout),
             )
             self.connection.commit()
 

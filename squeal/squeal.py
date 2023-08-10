@@ -17,7 +17,9 @@ class Backend(abc.ABC):
     def destroy(self) -> None:
         raise NotImplementedError
 
-    def put(self, item: bytes, topic: int, delay: int, visibility_timeout: int) -> None:
+    def put(
+        self, payload: bytes, topic: int, delay: int, visibility_timeout: int
+    ) -> None:
         raise NotImplementedError
 
     def release_stalled_tasks(self, topic: int) -> int:
@@ -129,10 +131,12 @@ class Queue:
         if timeout == 0:
             return self.get_nowait(topic)
 
+        never_timeout = timeout < 0
+
         t0 = time.time()
         while True:
             t1 = time.time()
-            if timeout > 0 and timeout <= t1 - t0:
+            if not never_timeout and timeout <= t1 - t0:
                 raise QueueEmpty()
             try:
                 return self.get_nowait(topic)
@@ -175,12 +179,9 @@ class MonoQueue(Queue):
         self,
         topic=None,
         timeout: Optional[int] = None,
-        poll_interval: Optional[int] = None,
     ) -> "Message":
         self.maybe_raise_superfluous_topic(topic)
-        return super().get(
-            topic=self.topic, timeout=timeout, poll_interval=poll_interval
-        )
+        return super().get(topic=self.topic, timeout=timeout)
 
     def topics(self) -> List[Tuple[int, int]]:
         raise NotImplementedError

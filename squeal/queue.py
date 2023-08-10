@@ -1,5 +1,5 @@
 import time
-from typing import Tuple, List
+from typing import Tuple, List, Sequence
 from squeal.backend.base import Backend, Message, QueueEmpty
 
 
@@ -79,30 +79,19 @@ class Queue:
                 pass
             time.sleep(self.poll_interval)
 
-    def batch_get_nowait(self, topic: int, size: int) -> List["Message"]:
-        out = self.backend.batch_get(topic, size)
-        if len(out) < size:
-            if self.backend.release_stalled_messages(topic) == 0:
-                return out
-        out.extend(self.backend.batch_get(topic, size - len(out)))
-        return out
-
-    def batch_get(self, topic: int, size: int) -> List["Message"]:
-        if self.timeout == 0:
-            return self.batch_get_nowait(topic, size)
-
-        never_timeout = self.timeout < 0
+    def batch_get(self, topics: Sequence[Tuple[int, int]]) -> List["Message"]:
         out = []
-
-        t0 = time.time()
-        while True:
-            t1 = time.time()
-            if not never_timeout and self.timeout <= t1 - t0:
-                return out
-            out.extend(self.batch_get_nowait(topic, size - len(out)))
-            if len(out) == size:
-                return out
-            time.sleep(self.poll_interval)
+        for topic, size in topics:
+            if size <= 0:
+                continue
+            topic_msgs = self.backend.batch_get(topic, size)
+            if len(topic_msgs) < size:
+                if self.backend.release_stalled_messages(topic) > 0:
+                    topic_msgs.extend(
+                        self.backend.batch_get(topic, size - len(topic_msgs))
+                    )
+            out.extend(topic_msgs)
+        return out
 
     def topics(self) -> List[Tuple[int, int]]:
         return self.backend.topics()

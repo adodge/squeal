@@ -86,5 +86,5 @@ class TestQueue(TestCase):
         q.put(b"a", topic=1, priority=0)
         q.put(b"b", topic=1, priority=1)
 
-        msgs = q.batch_get_nowait(topic=1, size=2)
+        msgs = q.batch_get(topics=[(1, 2)])
         self.assertEqual(2, len(msgs))

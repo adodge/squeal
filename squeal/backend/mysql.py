@@ -1,8 +1,9 @@
 import random
 from typing import List, Tuple, Optional
 
-from squeal import Message, QueueEmpty
-from ..squeal import Backend, PAYLOAD_MAX_SIZE
+from squeal import Message, QueueEmpty, Backend
+
+PAYLOAD_MAX_SIZE = 1023
 
 # Create a table to store queue items
 # format args:
@@ -73,15 +74,14 @@ SQL_COUNT_2 = "SELECT topic, count(*) FROM {name} WHERE owner_id IS NULL GROUP B
 
 
 class MySQLBackend(Backend):
-    def __init__(self, connection, prefix: str, visibility_timeout: Optional[int] = None, *args, **kwargs):
+    def __init__(self, connection, prefix: str):
         """
         :param connection: https://peps.python.org/pep-0249/#connection-objects
         """
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.connection = connection
         self.prefix = prefix
         self.queue_table = f"{self.prefix}_queue"
-        self.visibility_timeout = visibility_timeout
         self.owner_id = random.randint(0, 2**32 - 1)
 
     def create(self) -> None:
@@ -96,13 +96,12 @@ class MySQLBackend(Backend):
             cur.execute(SQL_DROP.format(name=self.queue_table))
             self.connection.commit()
 
-    def put(self, item: bytes, topic: int) -> None:
-        if self.visibility_timeout is None:
-            raise RuntimeError
-        delay_seconds = 0
+    def put(self, item: bytes, topic: int, delay: int, visibility_timeout: int) -> None:
+        if len(item) > PAYLOAD_MAX_SIZE:
+            raise ValueError(f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {PAYLOAD_MAX_SIZE})")
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(SQL_INSERT.format(name=self.queue_table), args=(item, topic, delay_seconds, self.visibility_timeout))
+            cur.execute(SQL_INSERT.format(name=self.queue_table), args=(item, topic, delay, visibility_timeout))
             self.connection.commit()
 
     def release_stalled_tasks(self, topic: int) -> int:
@@ -141,7 +140,8 @@ class MySQLBackend(Backend):
             cur.execute(SQL_DELETE.format(name=self.queue_table), args=(task_id,))
             self.connection.commit()
 
-    def nack(self, task_id: int) -> None:
+    def nack(self, task_id: int, delay: int) -> None:
+        # TODO set delay
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(

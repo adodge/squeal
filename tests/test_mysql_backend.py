@@ -6,8 +6,8 @@ from .common import *
 
 class TestMySQLBackend(TestCase):
     def test_release_stalled(self):
-        with TemporaryMySQLBackend(visibility_timeout=1) as bk:
-            bk.put(b"test_release_stalled", topic=1)
+        with TemporaryMySQLBackend() as bk:
+            bk.put(b"test_release_stalled", topic=1, delay=0, visibility_timeout=0)
 
             x = bk.get(topic=1)
             self.assertEqual(b"test_release_stalled", x.payload)
@@ -20,8 +20,8 @@ class TestMySQLBackend(TestCase):
             self.assertEqual(b"test_release_stalled", y.payload)
 
     def test_ack(self):
-        with TemporaryMySQLBackend(visibility_timeout=1) as bk:
-            bk.put(b"test_ack", topic=1)
+        with TemporaryMySQLBackend() as bk:
+            bk.put(b"test_ack", topic=1, delay=0, visibility_timeout=0)
 
             x = bk.get(topic=1)
             self.assertEqual(b"test_ack", x.payload)
@@ -34,8 +34,8 @@ class TestMySQLBackend(TestCase):
                 bk.get(topic=1)
 
     def test_nack(self):
-        with TemporaryMySQLBackend(visibility_timeout=1) as bk:
-            bk.put(b"test_ack", topic=1)
+        with TemporaryMySQLBackend() as bk:
+            bk.put(b"test_ack", topic=1, delay=0, visibility_timeout=0)
 
             x = bk.get(topic=1)
             self.assertEqual(b"test_ack", x.payload)
@@ -49,8 +49,8 @@ class TestMySQLBackend(TestCase):
             self.assertIsNotNone(z)
 
     def test_context_manager(self):
-        with TemporaryMySQLBackend(visibility_timeout=1) as bk:
-            bk.put(b"test_ack", topic=1)
+        with TemporaryMySQLBackend() as bk:
+            bk.put(b"test_ack", topic=1, delay=0, visibility_timeout=0)
 
             with bk.get(topic=1) as task:
                 self.assertIsNotNone(task)

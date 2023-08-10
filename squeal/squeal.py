@@ -1,11 +1,6 @@
 import abc
 import time
-from typing import Tuple, Type, Union, List, Optional
-
-
-DEFAULT_TIMEOUT = -1
-DEFAULT_POLL_INTERVAL = 1
-PAYLOAD_MAX_SIZE = 1024
+from typing import Tuple, List, Optional
 
 
 class QueueEmpty(BaseException):
@@ -22,7 +17,7 @@ class Backend(abc.ABC):
     def destroy(self) -> None:
         raise NotImplementedError
 
-    def put(self, item: bytes, topic: int) -> None:
+    def put(self, item: bytes, topic: int, delay: int, visibility_timeout: int) -> None:
         raise NotImplementedError
 
     def release_stalled_tasks(self, topic: int) -> int:
@@ -34,7 +29,7 @@ class Backend(abc.ABC):
     def ack(self, task_id: int) -> None:
         raise NotImplementedError
 
-    def nack(self, task_id: int) -> None:
+    def nack(self, task_id: int, delay: int) -> None:
         raise NotImplementedError
 
     def topics(self) -> List[Tuple[int, int]]:
@@ -72,7 +67,7 @@ class Message:
                 "Trying to nack a Message that's already been acked or nacked"
             )
         self.status = False
-        self.backend.nack(self.idx)
+        self.backend.nack(self.idx, delay=0)  # TODO parameterize this delay
 
 
 class Queue:
@@ -80,34 +75,24 @@ class Queue:
     FIFO(-ish) queue backed by a SQL table
     """
 
-    def __init__(
-        self,
-        backend_instance_or_class: Union[Backend, Type[Backend]],
-        *backend_args,
-        **backend_kwargs,
-    ):
-        self.default_timeout: int = backend_kwargs.pop(
-            "default_timeout", DEFAULT_TIMEOUT
-        )
-        self.default_poll_interval: int = backend_kwargs.pop(
-            "default_poll_interval", DEFAULT_POLL_INTERVAL
-        )
+    def __init__(self, backend: Backend, timeout: int = -1, poll_interval: float = 1, delay: int = 0,
+                 visibility_timeout: int = 60, auto_create: bool = True):
+        self.timeout = timeout
+        self.poll_interval = poll_interval
+        self.delay = delay
+        self.visibility_timeout = visibility_timeout
 
-        if self.default_poll_interval <= 0:
+        self.backend = backend
+
+        if self.poll_interval <= 0:
             raise RuntimeError("Poll interval must be positive")
+        if self.delay < 0:
+            raise RuntimeError("Poll interval must be non-negative")
+        if self.visibility_timeout <= 0:
+            raise RuntimeError("Visibility timeout must be positive")
 
-        if isinstance(backend_instance_or_class, Backend):
-            self.backend = backend_instance_or_class
-            if backend_args or backend_kwargs:
-                raise RuntimeError(
-                    "If you provide a Backend instance, you cannot also provide arguments"
-                )
-        elif issubclass(backend_instance_or_class, Backend):
-            self.backend = backend_instance_or_class(*backend_args, **backend_kwargs)
-        else:
-            raise RuntimeError(
-                "Must provide either am Backend instance or a class and arguments"
-            )
+        if auto_create:
+            self.create()
 
     def create(self) -> None:
         self.backend.create()
@@ -116,9 +101,7 @@ class Queue:
         self.backend.destroy()
 
     def put(self, item: bytes, topic: int) -> None:
-        if len(item) > PAYLOAD_MAX_SIZE:
-            raise RuntimeError("Payload is larger than PAYLOAD_MAX_SIZE")
-        self.backend.put(item, topic)
+        self.backend.put(item, topic, self.delay, self.visibility_timeout)
 
     def get_nowait(self, topic: int) -> "Message":
         try:
@@ -129,15 +112,12 @@ class Queue:
         return self.backend.get(topic)
 
     def get(
-        self,
-        topic: int,
-        timeout: Optional[int] = None,
-        poll_interval: Optional[int] = None,
+            self,
+            topic: int,
+            timeout: Optional[int] = None,
     ) -> "Message":
         if timeout is None:
-            timeout = self.default_timeout
-        if poll_interval is None:
-            poll_interval = self.default_poll_interval
+            timeout = self.timeout
 
         if timeout == 0:
             return self.get_nowait(topic)
@@ -151,7 +131,7 @@ class Queue:
                 return self.get_nowait(topic)
             except QueueEmpty:
                 pass
-            time.sleep(poll_interval)
+            time.sleep(self.poll_interval)
 
     def topics(self) -> List[Tuple[int, int]]:
         return self.backend.topics()
@@ -165,44 +145,35 @@ class MonoQueue(Queue):
     FIFO(-ish) queue backed by a SQL table, with only one topic
     """
 
-    def __init__(
-        self,
-        backend_instance_or_class: Union[Backend, Type[Backend]],
-        *backend_args,
-        **backend_kwargs,
-    ):
-        self.topic = backend_kwargs.pop("topic", 0)
-        super().__init__(backend_instance_or_class, *backend_args, **backend_kwargs)
+    @staticmethod
+    def maybe_raise_superfluous_topic(topic: Optional[int]):
+        if topic is not None:
+            raise RuntimeError("Trying to call a MonoQueue method with an explicit topic")
+
+    def __init__(self, *args, topic: int = 0, **kwargs):
+        self.topic = topic
+        super().__init__(*args, **kwargs)
 
     def put(self, item: bytes, topic=None) -> None:
-        if topic is not None:
-            raise RuntimeError("Trying to use a MonoQueue with an explicit topic.")
+        self.maybe_raise_superfluous_topic(topic)
         super().put(item, self.topic)
 
     def get_nowait(self, topic=None) -> "Message":
-        if topic is not None:
-            raise RuntimeError("Trying to use a MonoQueue with an explicit topic.")
+        self.maybe_raise_superfluous_topic(topic)
         return super().get_nowait(self.topic)
 
-    def get(
-        self,
-        topic=None,
-        timeout: Optional[int] = None,
-        poll_interval: Optional[int] = None,
-    ) -> "Message":
-        if topic is not None:
-            raise RuntimeError("Trying to use a MonoQueue with an explicit topic.")
+    def get(self, topic=None, timeout: Optional[int] = None, poll_interval: Optional[int] = None) -> "Message":
+        self.maybe_raise_superfluous_topic(topic)
         return super().get(
             topic=self.topic, timeout=timeout, poll_interval=poll_interval
         )
 
     def topics(self) -> List[Tuple[int, int]]:
-        raise RuntimeError("Trying to query topics on MonoQueue")
+        raise NotImplementedError
 
     def size(self, topic=None) -> int:
-        if topic is not None:
-            raise RuntimeError("Trying to use a MonoQueue with an explicit topic.")
+        self.maybe_raise_superfluous_topic(topic)
         return super().size(self.topic)
 
 
-__all__ = ["Queue", "MonoQueue", "Message", "QueueEmpty", "Backend", "PAYLOAD_MAX_SIZE"]
+__all__ = ["Queue", "MonoQueue", "Message", "QueueEmpty", "Backend"]

@@ -38,10 +38,10 @@ Check the `examples/` directory.
 # Contributing
 
 ## To-Do
-* some way of handling messages that are failing repeatedly
+* dead letter queue for messages that fail repeatedly
 * raise some better exceptions if we get an expected error from the SQL library (table doesn't exist, etc)
 * do some benchmarking and add indices
-* refactor tests to test each backend (and queue backed by the backend) with the same battery of tests
+* refactor tests so all backends are compared against the same expectations
 
 Please feel free to submit an issue to the github for bugs, comments, or feature requests.  Also feel free to fork and make a PR.
 

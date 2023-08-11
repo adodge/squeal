@@ -110,3 +110,16 @@ class TestMySQLQueue(TestCase):
             x.nack()
             z = q.get_nowait(topic=1)
             self.assertEqual(b"test_queue_nack", z.payload)
+
+    def test_hash_uniqueness(self):
+        with TemporaryMySQLBackend() as bk:
+            q = Queue(bk, visibility_timeout=100, failure_base_delay=0)
+            q.put(b"", topic=1, priority=0, hsh=b"0000000000000000")
+            q.put(b"", topic=1, priority=100, hsh=b"0000000000000001")
+            with self.assertRaises(Exception):
+                q.put(b"", topic=1, hsh=b"0000000000000001")
+
+            x = q.get(topic=1)
+            x.ack()
+
+            q.put(b"", topic=1, hsh=b"0000000000000001")

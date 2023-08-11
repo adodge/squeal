@@ -1,5 +1,5 @@
 from .base import Backend, Message, QueueEmpty
-from typing import List, Tuple
+from typing import List, Tuple, Iterable, Optional
 import time
 from collections import Counter
 
@@ -13,8 +13,19 @@ class LocalBackend(Backend):
     def __init__(self):
         super().__init__()
         self.messages = []
+        self.unique_constraint = set()
         self.next_id = 0
         self.created = False
+        self._max_payload_size = None
+        self._hash_size = 16
+
+    @property
+    def max_payload_size(self) -> Optional[int]:
+        return self._max_payload_size
+
+    @property
+    def hash_size(self) -> int:
+        return self._hash_size
 
     def create(self) -> None:
         self.created = True
@@ -26,17 +37,29 @@ class LocalBackend(Backend):
         self,
         payload: bytes,
         topic: int,
+        hsh: Optional[bytes],
         priority: int,
         delay: int,
         failure_base_delay: int,
         visibility_timeout: int,
     ) -> None:
         assert self.created
+        if hsh is not None and len(hsh) != self._hash_size:
+            raise ValueError(
+                f"hsh size is not HASH_SIZE ({len(hsh)} != {self._hash_size})"
+            )
+
+        if hsh is not None:
+            if (topic, hsh) in self.unique_constraint:
+                raise ValueError((topic, hsh))
+            self.unique_constraint.add((topic, hsh))
+
         self.messages.append(
             {
                 "id": self.next_id,
                 "payload": payload,
                 "topic": topic,
+                "hsh": hsh,
                 "priority": priority,
                 "acquired": False,
                 "visibility_timeout": visibility_timeout,
@@ -60,7 +83,6 @@ class LocalBackend(Backend):
                 continue
 
             msg["acquired"] = False
-            msg["failure_count"] += 1
             n += 1
         return n
 
@@ -102,7 +124,10 @@ class LocalBackend(Backend):
             break
         else:
             return
-        self.messages.remove(idx)
+        if self.messages[idx]["hsh"] is not None:
+            k = (self.messages[idx]["topic"], self.messages[idx]["hsh"])
+            self.unique_constraint.remove(k)
+        del self.messages[idx]
 
     def nack(self, task_id: int) -> None:
         assert self.created
@@ -118,6 +143,26 @@ class LocalBackend(Backend):
             msg["delivery_time"] = time.time() + delay
 
             break
+
+    def batch_nack(self, task_ids: Iterable[int]) -> None:
+        assert self.created
+        for task_id in task_ids:
+            self.nack(task_id)
+
+    def touch(self, task_id: int) -> None:
+        assert self.created
+        for msg in self.messages:
+            if msg["id"] != task_id:
+                continue
+            if not msg["acquired"]:
+                continue
+            msg["acquire_time"] = time.time()
+            break
+
+    def batch_touch(self, task_ids: Iterable[int]) -> None:
+        assert self.created
+        for task_id in task_ids:
+            self.touch(task_id)
 
     def topics(self) -> List[Tuple[int, int]]:
         assert self.created

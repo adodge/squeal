@@ -1,5 +1,5 @@
 import time
-from typing import Tuple, List, Sequence
+from typing import Tuple, List, Sequence, Dict, Iterable, Optional
 from squeal.backend.base import Backend, Message, QueueEmpty
 
 
@@ -18,13 +18,14 @@ class Queue:
         visibility_timeout: int = 60,
         auto_create: bool = True,
     ):
+        self.backend = backend
         self.timeout = timeout
         self.poll_interval = poll_interval
         self.new_message_delay = new_message_delay
         self.failure_base_delay = failure_base_delay
         self.visibility_timeout = visibility_timeout
 
-        self.backend = backend
+        self.messages: Dict[int, "Message"] = {}
 
         if self.poll_interval <= 0:
             raise RuntimeError("Poll interval must be positive")
@@ -44,23 +45,31 @@ class Queue:
     def destroy(self) -> None:
         self.backend.destroy()
 
-    def put(self, item: bytes, topic: int, priority: int = 0) -> None:
+    def put(
+        self, item: bytes, topic: int, priority: int = 0, hsh: Optional[bytes] = None
+    ) -> None:
         self.backend.put(
             item,
             topic,
+            hsh,
             priority,
             self.new_message_delay,
             self.failure_base_delay,
             self.visibility_timeout,
         )
 
-    def get_nowait(self, topic: int) -> "Message":
+    def _get_nowait(self, topic: int) -> "Message":
         try:
             return self.backend.get(topic)
         except QueueEmpty:
             if self.backend.release_stalled_messages(topic) == 0:
                 raise QueueEmpty()
         return self.backend.get(topic)
+
+    def get_nowait(self, topic: int) -> "Message":
+        msg = self._get_nowait(topic)
+        self.messages[msg.idx] = msg
+        return msg
 
     def get(self, topic: int) -> "Message":
         if self.timeout == 0:
@@ -79,7 +88,7 @@ class Queue:
                 pass
             time.sleep(self.poll_interval)
 
-    def batch_get(self, topics: Sequence[Tuple[int, int]]) -> List["Message"]:
+    def batch_get(self, topics: Iterable[Tuple[int, int]]) -> List["Message"]:
         out = []
         for topic, size in topics:
             if size <= 0:
@@ -91,7 +100,23 @@ class Queue:
                         self.backend.batch_get(topic, size - len(topic_msgs))
                     )
             out.extend(topic_msgs)
+        for msg in out:
+            self.messages[msg.idx] = msg
         return out
+
+    def _prune_stored_messages(self):
+        released = [msg.idx for msg in self.messages.values() if msg.released]
+        for idx in released:
+            del self.messages[idx]
+
+    def touch(self) -> None:
+        self._prune_stored_messages()
+        self.backend.batch_touch(self.messages.keys())
+
+    def nack(self) -> None:
+        self._prune_stored_messages()
+        self.backend.batch_nack(self.messages.keys())
+        self.messages.clear()
 
     def topics(self) -> List[Tuple[int, int]]:
         return self.backend.topics()

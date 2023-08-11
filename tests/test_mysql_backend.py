@@ -10,6 +10,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"test_release_stalled",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -31,6 +32,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"test_ack",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -52,6 +54,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"test_ack",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -74,6 +77,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"test_ack",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -102,6 +106,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"a",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -110,6 +115,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"b",
                 topic=1,
+                hsh=None,
                 priority=1,
                 delay=0,
                 failure_base_delay=0,
@@ -129,6 +135,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"a",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -143,6 +150,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"a",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -151,6 +159,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"b",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -165,6 +174,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"a",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -173,6 +183,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"b",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -181,6 +192,7 @@ class TestMySQLBackend(TestCase):
             bk.put(
                 b"b",
                 topic=1,
+                hsh=None,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,

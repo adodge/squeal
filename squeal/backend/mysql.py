@@ -1,17 +1,20 @@
 import random
-from typing import List, Tuple
+from typing import List, Tuple, Iterable, Optional
 from .base import Backend, Message, QueueEmpty
 
-PAYLOAD_MAX_SIZE = 1023
+PAYLOAD_MAX_SIZE = 2047
+HASH_SIZE = 16
 
 # Create a table to store queue items
 # format args:
 #   name -> table name
+#   hash_size -> hsh size (bytes)
 #   size -> max message size (bytes)
 SQL_CREATE = """
 CREATE TABLE IF NOT EXISTS {name} (
     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
     topic INT UNSIGNED NOT NULL,
+    hash BINARY({hash_size}) NULL,
     priority INT UNSIGNED NOT NULL,
     owner_id INT UNSIGNED NULL,
     delivery_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -20,7 +23,8 @@ CREATE TABLE IF NOT EXISTS {name} (
     failure_count INT UNSIGNED DEFAULT 0,
     acquire_time DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
     payload VARBINARY({size}),
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    UNIQUE (topic, hash)
 )
 """
 
@@ -29,19 +33,20 @@ CREATE TABLE IF NOT EXISTS {name} (
 #   name -> table name
 SQL_DROP = "DROP TABLE IF EXISTS {name}"
 
-# Insert a row into the queue
+# Insert a message into the queue
 # format args:
 #   name -> table name
 # sql substitution args:
 # * payload
 # * topic
+# * hsh
 # * priority
 # * delay (seconds)
 # * failure_base_delay (seconds)
 # * visibility timeout (seconds)
 SQL_INSERT = (
-    "INSERT INTO {name} (payload, topic, priority, delivery_time, failure_base_delay, visibility_timeout)"
-    "VALUES (%s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME), %s, %s)"
+    "INSERT INTO {name} (payload, topic, hash, priority, delivery_time, failure_base_delay, visibility_timeout)"
+    "VALUES (%s, %s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME), %s, %s)"
 )
 
 # Release stalled messages
@@ -56,26 +61,47 @@ WHERE owner_id IS NOT NULL AND topic=%s
     AND TIMESTAMPDIFF(SECOND, acquire_time, NOW()) > visibility_timeout
 """
 
-# Acquire a task
+# Acquire a message
 # format args:
 #   name -> table name
 SQL_UPDATE_2 = "UPDATE {name} SET owner_id=%s WHERE id=%s"
 
-# Release a task
+# Release a message
 # format args:
 #   name -> table name
 # sql substitution args:
 # * owner id
 # * message id
-SQL_UPDATE_3 = """
+SQL_NACK = """
 UPDATE {name}
    SET owner_id=NULL,
        delivery_time=TIMESTAMPADD(SECOND, failure_base_delay * POW(2, failure_count), CURRENT_TIME),
        failure_count = failure_count + 1
    WHERE owner_id=%s AND id=%s
 """
+SQL_BATCH_NACK = """
+UPDATE {name}
+   SET owner_id=NULL,
+       delivery_time=TIMESTAMPADD(SECOND, failure_base_delay * POW(2, failure_count), CURRENT_TIME),
+       failure_count = failure_count + 1
+   WHERE owner_id=%s AND id IN %s
+"""
 
-# Find a task to acquire
+# Refresh the acquire time for a message
+SQL_TOUCH = """
+UPDATE {name}
+   SET acquire_time = CURRENT_TIME
+   WHERE owner_id=%s AND id=%s
+"""
+
+# Refresh the acquire time for a bunch of messages
+SQL_BATCH_TOUCH = """
+UPDATE {name}
+   SET acquire_time = CURRENT_TIME
+   WHERE owner_id=%s AND id IN %s
+"""
+
+# Find a message to acquire
 SQL_SELECT = """
 SELECT id, owner_id, payload FROM {name}
     WHERE owner_id IS NULL AND topic=%s AND TIMESTAMPDIFF(SECOND, delivery_time, NOW()) >= 0
@@ -91,13 +117,13 @@ SELECT id, owner_id, payload FROM {name}
 """
 SQL_BATCH_UPDATE = "UPDATE {name} SET owner_id=%s WHERE id IN %s"
 
-# Finish a task
-SQL_DELETE = "DELETE FROM {name} WHERE id=%s"
+# Finish a message
+SQL_ACK = "DELETE FROM {name} WHERE id=%s"
 
-# Count tasks in topic
+# Count messages in topic
 SQL_COUNT = "SELECT count(1) FROM {name} WHERE topic=%s AND owner_id IS NULL"
 
-# Count tasks in all topics
+# Count messages in all topics
 SQL_COUNT_2 = "SELECT topic, count(*) FROM {name} WHERE owner_id IS NULL GROUP BY topic"
 
 
@@ -111,11 +137,27 @@ class MySQLBackend(Backend):
         self.prefix = prefix
         self.queue_table = f"{self.prefix}_queue"
         self.owner_id = random.randint(0, 2**32 - 1)
+        self._max_payload_size = PAYLOAD_MAX_SIZE
+        self._hash_size = HASH_SIZE
+
+    @property
+    def max_payload_size(self) -> Optional[int]:
+        return self._max_payload_size
+
+    @property
+    def hash_size(self) -> int:
+        return self._hash_size
 
     def create(self) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(SQL_CREATE.format(name=self.queue_table, size=PAYLOAD_MAX_SIZE))
+            cur.execute(
+                SQL_CREATE.format(
+                    name=self.queue_table,
+                    size=self._max_payload_size,
+                    hash_size=self._hash_size,
+                )
+            )
             self.connection.commit()
 
     def destroy(self) -> None:
@@ -128,14 +170,19 @@ class MySQLBackend(Backend):
         self,
         payload: bytes,
         topic: int,
+        hsh: Optional[bytes],
         priority: int,
         delay: int,
         failure_base_delay: int,
         visibility_timeout: int,
     ) -> None:
-        if len(payload) > PAYLOAD_MAX_SIZE:
+        if len(payload) > self._max_payload_size:
             raise ValueError(
-                f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {PAYLOAD_MAX_SIZE})"
+                f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {self._max_payload_size})"
+            )
+        if hsh is not None and len(hsh) != self._hash_size:
+            raise ValueError(
+                f"hsh size is not HASH_SIZE ({len(hsh)} != {self._hash_size})"
             )
         with self.connection.cursor() as cur:
             self.connection.begin()
@@ -144,6 +191,7 @@ class MySQLBackend(Backend):
                 args=(
                     payload,
                     topic,
+                    hsh,
                     priority,
                     delay,
                     failure_base_delay,
@@ -208,16 +256,48 @@ class MySQLBackend(Backend):
     def ack(self, task_id: int) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(SQL_DELETE.format(name=self.queue_table), args=(task_id,))
+            cur.execute(SQL_ACK.format(name=self.queue_table), args=(task_id,))
+            # TODO raise if it's already expired
             self.connection.commit()
 
     def nack(self, task_id: int) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
-                SQL_UPDATE_3.format(name=self.queue_table),
+                SQL_NACK.format(name=self.queue_table),
                 args=(self.owner_id, task_id),
             )
+            # TODO raise if it's already expired
+            self.connection.commit()
+
+    def batch_nack(self, task_ids: Iterable[int]) -> None:
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(
+                SQL_BATCH_NACK.format(name=self.queue_table),
+                args=(self.owner_id, task_ids),
+            )
+            # TODO raise if it's already expired
+            self.connection.commit()
+
+    def touch(self, task_id: int) -> None:
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(
+                SQL_TOUCH.format(name=self.queue_table),
+                args=(self.owner_id, task_id),
+            )
+            # TODO raise if it's already expired
+            self.connection.commit()
+
+    def batch_touch(self, task_ids: Iterable[int]) -> None:
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(
+                SQL_BATCH_TOUCH.format(name=self.queue_table),
+                args=(self.owner_id, task_ids),
+            )
+            # TODO raise if it's already expired
             self.connection.commit()
 
     def size(self, topic: int) -> int:

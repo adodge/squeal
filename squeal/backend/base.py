@@ -1,5 +1,5 @@
 import abc
-from typing import List, Tuple
+from typing import List, Tuple, Sequence, Iterable, Optional
 
 
 class QueueEmpty(Exception):
@@ -16,10 +16,19 @@ class Backend(abc.ABC):
     def destroy(self) -> None:
         raise NotImplementedError
 
+    @property
+    def max_payload_size(self) -> Optional[int]:
+        raise NotImplementedError
+
+    @property
+    def hash_size(self) -> int:
+        raise NotImplementedError
+
     def put(
         self,
         payload: bytes,
         topic: int,
+        hsh: Optional[bytes],
         priority: int,
         delay: int,
         failure_base_delay: int,
@@ -40,6 +49,15 @@ class Backend(abc.ABC):
         raise NotImplementedError
 
     def nack(self, task_id: int) -> None:
+        raise NotImplementedError
+
+    def batch_nack(self, task_ids: Iterable[int]) -> None:
+        raise NotImplementedError
+
+    def touch(self, task_id: int) -> None:
+        raise NotImplementedError
+
+    def batch_touch(self, task_ids: Iterable[int]) -> None:
         raise NotImplementedError
 
     def topics(self) -> List[Tuple[int, int]]:
@@ -63,18 +81,33 @@ class Message:
         if self.status is None:
             self.nack()
 
+    @property
+    def released(self):
+        return self.status is not None
+
     def ack(self):
-        if self.status is not None:
-            raise RuntimeError(
-                "Trying to ack a Message that's already been acked or nacked"
-            )
+        if self.released:
+            raise RuntimeError("Message has already been relinquished")
         self.status = True
         self.backend.ack(self.idx)
 
     def nack(self):
-        if self.status is not None:
-            raise RuntimeError(
-                "Trying to nack a Message that's already been acked or nacked"
-            )
+        if self.released:
+            raise RuntimeError("Message has already been relinquished")
         self.status = False
         self.backend.nack(self.idx)
+
+    def touch(self):
+        if self.released:
+            raise RuntimeError("Message has already been relinquished")
+        self.backend.touch(self.idx)
+
+    def check(self) -> bool:
+        """
+        Check whether the message is still owned by this consumer.
+        Use a local estimate based on when the message was acquired.
+        """
+        if self.released:
+            return False
+
+        raise NotImplementedError

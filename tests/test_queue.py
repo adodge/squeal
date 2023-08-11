@@ -88,3 +88,15 @@ class TestQueue(TestCase):
 
         msgs = q.batch_get(topics=[(1, 2)])
         self.assertEqual(2, len(msgs))
+
+    def test_hash_uniqueness(self):
+        q = Queue(LocalBackend())
+        q.put(b"", topic=1, priority=0, hsh=b"0000000000000000")
+        q.put(b"", topic=1, priority=100, hsh=b"0000000000000001")
+        with self.assertRaises(Exception):
+            q.put(b"", topic=1, hsh=b"0000000000000001")
+
+        x = q.get(topic=1)
+        x.ack()
+
+        q.put(b"", topic=1, hsh=b"0000000000000001")

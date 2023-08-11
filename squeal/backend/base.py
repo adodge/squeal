@@ -36,6 +36,16 @@ class Backend(abc.ABC):
     ) -> None:
         raise NotImplementedError
 
+    def batch_put(
+        self,
+        data: Iterable[Tuple[bytes, int, Optional[bytes]]],
+        priority: int,
+        delay: int,
+        failure_base_delay: int,
+        visibility_timeout: int,
+    ) -> None:
+        raise NotImplementedError
+
     def release_stalled_messages(self, topic: int) -> int:
         raise NotImplementedError
 

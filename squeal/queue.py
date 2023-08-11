@@ -46,7 +46,7 @@ class Queue:
         self.backend.destroy()
 
     def put(
-        self, item: bytes, topic: int, priority: int = 0, hsh: Optional[bytes] = None
+        self, item: bytes, topic: int, hsh: Optional[bytes] = None, priority: int = 0
     ) -> None:
         self.backend.put(
             item,
@@ -58,10 +58,22 @@ class Queue:
             self.visibility_timeout,
         )
 
+    def batch_put(
+        self, items: Iterable[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
+    ):
+        self.backend.batch_put(
+            items,
+            priority,
+            self.new_message_delay,
+            self.failure_base_delay,
+            self.visibility_timeout,
+        )
+
     def _get_nowait(self, topic: int) -> "Message":
         try:
             return self.backend.get(topic)
         except QueueEmpty:
+            # XXX consider moving this behavior into the Backend
             if self.backend.release_stalled_messages(topic) == 0:
                 raise QueueEmpty()
         return self.backend.get(topic)
@@ -95,6 +107,7 @@ class Queue:
                 continue
             topic_msgs = self.backend.batch_get(topic, size)
             if len(topic_msgs) < size:
+                # XXX consider moving this behavior into the Backend
                 if self.backend.release_stalled_messages(topic) > 0:
                     topic_msgs.extend(
                         self.backend.batch_get(topic, size - len(topic_msgs))

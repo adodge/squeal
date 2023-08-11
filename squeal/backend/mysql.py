@@ -200,6 +200,44 @@ class MySQLBackend(Backend):
             )
             self.connection.commit()
 
+    def batch_put(
+        self,
+        data: Iterable[Tuple[bytes, int, Optional[bytes]]],
+        priority: int,
+        delay: int,
+        failure_base_delay: int,
+        visibility_timeout: int,
+    ) -> None:
+        for payload, topic, hsh in data:
+            if len(payload) > self._max_payload_size:
+                raise ValueError(
+                    f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {self._max_payload_size})"
+                )
+            if hsh is not None and len(hsh) != self._hash_size:
+                raise ValueError(
+                    f"hsh size is not HASH_SIZE ({len(hsh)} != {self._hash_size})"
+                )
+
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            rows = [
+                (
+                    payload,
+                    topic,
+                    hsh,
+                    priority,
+                    delay,
+                    failure_base_delay,
+                    visibility_timeout,
+                )
+                for payload, topic, hsh in data
+            ]
+            cur.executemany(
+                SQL_INSERT.format(name=self.queue_table),
+                args=rows,
+            )
+            self.connection.commit()
+
     def release_stalled_messages(self, topic: int) -> int:
         with self.connection.cursor() as cur:
             self.connection.begin()

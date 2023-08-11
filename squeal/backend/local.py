@@ -1,7 +1,8 @@
-from .base import Backend, Message, QueueEmpty
-from typing import List, Tuple, Iterable, Optional
 import time
 from collections import Counter
+from typing import List, Tuple, Iterable, Optional
+
+from .base import Backend, Message, QueueEmpty
 
 
 class LocalBackend(Backend):
@@ -69,6 +70,26 @@ class LocalBackend(Backend):
             }
         )
         self.next_id += 1
+
+    def batch_put(
+        self,
+        data: Iterable[Tuple[bytes, int, Optional[bytes]]],
+        priority: int,
+        delay: int,
+        failure_base_delay: int,
+        visibility_timeout: int,
+    ) -> None:
+        assert self.created
+        for payload, topic, hsh in data:
+            self.put(
+                payload,
+                topic,
+                hsh,
+                priority,
+                delay,
+                failure_base_delay,
+                visibility_timeout,
+            )
 
     def release_stalled_messages(self, topic: int) -> int:
         assert self.created

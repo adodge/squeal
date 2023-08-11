@@ -123,3 +123,12 @@ class TestMySQLQueue(TestCase):
             x.ack()
 
             q.put(b"", topic=1, hsh=b"0000000000000001")
+
+    def test_batch_put(self):
+        with TemporaryMySQLBackend() as bk:
+            q = Queue(bk, visibility_timeout=1, failure_base_delay=0)
+            q.batch_put([(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)])
+            self.assertEqual(3, q.size(topic=1))
+            msgs = q.batch_get(topics=[(1, 3)])
+            self.assertEqual(3, len(msgs))
+            self.assertEqual(0, q.size(topic=1))

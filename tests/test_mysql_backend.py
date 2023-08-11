@@ -201,3 +201,17 @@ class TestMySQLBackend(TestCase):
             msgs = bk.batch_get(topic=1, size=2)
             self.assertEqual(2, len(msgs))
             self.assertEqual(1, bk.size(topic=1))
+
+    def test_batch_put(self):
+        with TemporaryMySQLBackend() as bk:
+            bk.batch_put(
+                data=[(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            self.assertEqual(3, bk.size(topic=1))
+            msgs = bk.batch_get(topic=1, size=3)
+            self.assertEqual(3, len(msgs))
+            self.assertEqual(0, bk.size(topic=1))

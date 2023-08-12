@@ -1,9 +1,6 @@
 import random
 from typing import List, Tuple, Iterable, Optional
-from .base import Backend, Message, QueueEmpty
-
-PAYLOAD_MAX_SIZE = 2047
-HASH_SIZE = 16
+from .base import Backend, Message
 
 # Create a table to store queue items
 # format args:
@@ -137,16 +134,14 @@ class MySQLBackend(Backend):
         self.prefix = prefix
         self.queue_table = f"{self.prefix}_queue"
         self.owner_id = random.randint(0, 2**32 - 1)
-        self._max_payload_size = PAYLOAD_MAX_SIZE
-        self._hash_size = HASH_SIZE
 
     @property
     def max_payload_size(self) -> Optional[int]:
-        return self._max_payload_size
+        return 2047
 
     @property
     def hash_size(self) -> int:
-        return self._hash_size
+        return 16
 
     def create(self) -> None:
         with self.connection.cursor() as cur:
@@ -154,8 +149,8 @@ class MySQLBackend(Backend):
             cur.execute(
                 SQL_CREATE.format(
                     name=self.queue_table,
-                    size=self._max_payload_size,
-                    hash_size=self._hash_size,
+                    size=self.max_payload_size,
+                    hash_size=self.hash_size,
                 )
             )
             self.connection.commit()
@@ -164,40 +159,6 @@ class MySQLBackend(Backend):
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(SQL_DROP.format(name=self.queue_table))
-            self.connection.commit()
-
-    def put(
-        self,
-        payload: bytes,
-        topic: int,
-        hsh: Optional[bytes],
-        priority: int,
-        delay: int,
-        failure_base_delay: int,
-        visibility_timeout: int,
-    ) -> None:
-        if len(payload) > self._max_payload_size:
-            raise ValueError(
-                f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {self._max_payload_size})"
-            )
-        if hsh is not None and len(hsh) != self._hash_size:
-            raise ValueError(
-                f"hsh size is not HASH_SIZE ({len(hsh)} != {self._hash_size})"
-            )
-        with self.connection.cursor() as cur:
-            self.connection.begin()
-            cur.execute(
-                SQL_INSERT.format(name=self.queue_table),
-                args=(
-                    payload,
-                    topic,
-                    hsh,
-                    priority,
-                    delay,
-                    failure_base_delay,
-                    visibility_timeout,
-                ),
-            )
             self.connection.commit()
 
     def batch_put(
@@ -209,13 +170,13 @@ class MySQLBackend(Backend):
         visibility_timeout: int,
     ) -> None:
         for payload, topic, hsh in data:
-            if len(payload) > self._max_payload_size:
+            if len(payload) > self.max_payload_size:
                 raise ValueError(
-                    f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {self._max_payload_size})"
+                    f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {self.max_payload_size})"
                 )
-            if hsh is not None and len(hsh) != self._hash_size:
+            if hsh is not None and len(hsh) != self.hash_size:
                 raise ValueError(
-                    f"hsh size is not HASH_SIZE ({len(hsh)} != {self._hash_size})"
+                    f"hsh size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
                 )
 
         with self.connection.cursor() as cur:
@@ -249,25 +210,6 @@ class MySQLBackend(Backend):
             self.connection.commit()
             return rows
 
-    def get(self, topic: int) -> "Message":
-        with self.connection.cursor() as cur:
-            self.connection.begin()
-
-            cur.execute(SQL_SELECT.format(name=self.queue_table), args=(topic,))
-
-            row = cur.fetchone()
-            if row is None:
-                self.connection.rollback()
-                raise QueueEmpty()
-
-            cur.execute(
-                SQL_UPDATE_2.format(name=self.queue_table), args=(self.owner_id, row[0])
-            )
-
-            self.connection.commit()
-
-        return Message(row[2], row[0], self)
-
     def batch_get(self, topic: int, size: int) -> List["Message"]:
         with self.connection.cursor() as cur:
             self.connection.begin()
@@ -298,32 +240,12 @@ class MySQLBackend(Backend):
             # TODO raise if it's already expired
             self.connection.commit()
 
-    def nack(self, task_id: int) -> None:
-        with self.connection.cursor() as cur:
-            self.connection.begin()
-            cur.execute(
-                SQL_NACK.format(name=self.queue_table),
-                args=(self.owner_id, task_id),
-            )
-            # TODO raise if it's already expired
-            self.connection.commit()
-
     def batch_nack(self, task_ids: Iterable[int]) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
                 SQL_BATCH_NACK.format(name=self.queue_table),
                 args=(self.owner_id, task_ids),
-            )
-            # TODO raise if it's already expired
-            self.connection.commit()
-
-    def touch(self, task_id: int) -> None:
-        with self.connection.cursor() as cur:
-            self.connection.begin()
-            cur.execute(
-                SQL_TOUCH.format(name=self.queue_table),
-                args=(self.owner_id, task_id),
             )
             # TODO raise if it's already expired
             self.connection.commit()
@@ -338,7 +260,7 @@ class MySQLBackend(Backend):
             # TODO raise if it's already expired
             self.connection.commit()
 
-    def size(self, topic: int) -> int:
+    def get_topic_size(self, topic: int) -> int:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(SQL_COUNT.format(name=self.queue_table), args=(topic,))
@@ -346,7 +268,7 @@ class MySQLBackend(Backend):
             self.connection.commit()
             return result[0]
 
-    def topics(self) -> List[Tuple[int, int]]:
+    def list_topics(self) -> List[Tuple[int, int]]:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(SQL_COUNT_2.format(name=self.queue_table))

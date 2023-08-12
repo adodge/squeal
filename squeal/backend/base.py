@@ -1,20 +1,10 @@
 import abc
-from typing import List, Tuple, Sequence, Iterable, Optional
-
-
-class QueueEmpty(Exception):
-    pass
+from typing import List, Tuple, Iterable, Optional
 
 
 class Backend(abc.ABC):
     def __init__(self, *args, **kwargs):
         pass
-
-    def create(self) -> None:
-        raise NotImplementedError
-
-    def destroy(self) -> None:
-        raise NotImplementedError
 
     @property
     def max_payload_size(self) -> Optional[int]:
@@ -24,16 +14,10 @@ class Backend(abc.ABC):
     def hash_size(self) -> int:
         raise NotImplementedError
 
-    def put(
-        self,
-        payload: bytes,
-        topic: int,
-        hsh: Optional[bytes],
-        priority: int,
-        delay: int,
-        failure_base_delay: int,
-        visibility_timeout: int,
-    ) -> None:
+    def create(self) -> None:
+        raise NotImplementedError
+
+    def destroy(self) -> None:
         raise NotImplementedError
 
     def batch_put(
@@ -49,32 +33,45 @@ class Backend(abc.ABC):
     def release_stalled_messages(self, topic: int) -> int:
         raise NotImplementedError
 
-    def get(self, topic: int) -> "Message":
+    def ack(self, task_id: int) -> None:
         raise NotImplementedError
 
     def batch_get(self, topic: int, size: int) -> List["Message"]:
         raise NotImplementedError
 
-    def ack(self, task_id: int) -> None:
-        raise NotImplementedError
-
-    def nack(self, task_id: int) -> None:
-        raise NotImplementedError
-
     def batch_nack(self, task_ids: Iterable[int]) -> None:
-        raise NotImplementedError
-
-    def touch(self, task_id: int) -> None:
         raise NotImplementedError
 
     def batch_touch(self, task_ids: Iterable[int]) -> None:
         raise NotImplementedError
 
-    def topics(self) -> List[Tuple[int, int]]:
+    def list_topics(self) -> List[Tuple[int, int]]:
         raise NotImplementedError
 
-    def size(self, topic: int) -> int:
+    def get_topic_size(self, topic: int) -> int:
         raise NotImplementedError
+
+    def acquire_topic(self, topic_lock_visibility_timeout: int) -> "TopicLock":
+        raise NotImplementedError
+
+    def release_topic(self, topic: int) -> None:
+        raise NotImplementedError
+
+    def batch_release_topic(self, topics: Iterable[int]) -> None:
+        raise NotImplementedError
+
+    def touch_topic(self, topic: int) -> None:
+        raise NotImplementedError
+
+    def batch_touch_topic(self, topics: Iterable[int]) -> None:
+        raise NotImplementedError
+
+    def release_stalled_topic_locks(self) -> None:
+        raise NotImplementedError
+
+
+class TopicLock:
+    pass
 
 
 class Message:
@@ -105,12 +102,12 @@ class Message:
         if self.released:
             raise RuntimeError("Message has already been relinquished")
         self.status = False
-        self.backend.nack(self.idx)
+        self.backend.batch_nack([self.idx])
 
     def touch(self):
         if self.released:
             raise RuntimeError("Message has already been relinquished")
-        self.backend.touch(self.idx)
+        self.backend.batch_touch([self.idx])
 
     def check(self) -> bool:
         """

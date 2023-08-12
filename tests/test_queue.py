@@ -1,6 +1,6 @@
 import time
 from unittest import TestCase
-from squeal import Queue, QueueEmpty
+from squeal import Queue
 from squeal.backend.local import LocalBackend
 
 
@@ -11,45 +11,32 @@ class TestQueue(TestCase):
         msg = q.get(topic=1)
         self.assertEqual(b"a", msg.payload)
 
-    def test_get_nowait(self):
-        q = Queue(LocalBackend(), timeout=-1)
-        with self.assertRaises(QueueEmpty):
-            q.get_nowait(topic=1)
-
-    def test_timeout(self):
-        q = Queue(LocalBackend(), timeout=1, poll_interval=0.1)
-        with self.assertRaises(QueueEmpty):
-            q.get(topic=1)
-
     def test_delay(self):
         q = Queue(LocalBackend(), new_message_delay=1)
         q.put(b"a", topic=1)
-        with self.assertRaises(QueueEmpty):
-            q.get_nowait(topic=1)
+        self.assertIsNone(q.get(topic=1))
         time.sleep(1.1)
-        x = q.get_nowait(topic=1)
+        x = q.get(topic=1)
         self.assertEqual(b"a", x.payload)
 
     def test_visibility_timeout(self):
         q = Queue(LocalBackend(), visibility_timeout=1)
         q.put(b"a", topic=1)
-        q.get_nowait(topic=1)
-        with self.assertRaises(QueueEmpty):
-            q.get_nowait(topic=1)
+        q.get(topic=1)
+        self.assertIsNone(q.get(topic=1))
         time.sleep(1.1)
-        x = q.get_nowait(topic=1)
+        x = q.get(topic=1)
         self.assertEqual(b"a", x.payload)
 
     def test_queue_topics_dont_interfere(self):
         q = Queue(LocalBackend())
         q.put(b"a", topic=1)
 
-        with self.assertRaises(QueueEmpty):
-            q.get_nowait(topic=2)
+        self.assertIsNone(q.get(topic=2))
 
         q.put(b"b", topic=2)
 
-        x = q.get_nowait(topic=2)
+        x = q.get(topic=2)
         self.assertIsNotNone(x)
 
     def test_queue_topics(self):
@@ -61,7 +48,7 @@ class TestQueue(TestCase):
         for _ in range(4):
             q.put(b"", topic=3)
 
-        topics = dict(q.topics())
+        topics = dict(q.list_topics())
         self.assertEqual(
             {
                 1: 1,
@@ -70,8 +57,8 @@ class TestQueue(TestCase):
             },
             topics,
         )
-        self.assertEqual(0, q.size(100))
-        self.assertEqual(5, q.size(2))
+        self.assertEqual(0, q.get_topic_size(100))
+        self.assertEqual(5, q.get_topic_size(2))
 
     def test_priority(self):
         q = Queue(LocalBackend())
@@ -104,7 +91,7 @@ class TestQueue(TestCase):
     def test_batch_put(self):
         q = Queue(LocalBackend())
         q.batch_put([(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)])
-        self.assertEqual(3, q.size(topic=1))
+        self.assertEqual(3, q.get_topic_size(topic=1))
         msgs = q.batch_get(topics=[(1, 3)])
         self.assertEqual(3, len(msgs))
-        self.assertEqual(0, q.size(topic=1))
+        self.assertEqual(0, q.get_topic_size(topic=1))

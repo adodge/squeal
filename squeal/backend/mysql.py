@@ -1,6 +1,7 @@
 import random
 from typing import List, Tuple, Iterable, Optional
-from .base import Backend, Message
+
+from .base import Backend, Message, TopicLock
 
 # Create a table to store queue items
 # format args:
@@ -24,6 +25,15 @@ CREATE TABLE IF NOT EXISTS {name} (
     UNIQUE (topic, hash)
 )
 """
+SQL_CREATE_LOCKS = """
+CREATE TABLE IF NOT EXISTS {name} (
+    topic INT UNSIGNED NOT NULL,
+    owner_id INT UNSIGNED NULL,
+    visibility_timeout INT UNSIGNED NOT NULL,
+    acquire_time DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (topic)
+)
+"""
 
 # Destroy the table
 # format args:
@@ -43,72 +53,42 @@ SQL_DROP = "DROP TABLE IF EXISTS {name}"
 # * visibility timeout (seconds)
 SQL_INSERT = (
     "INSERT INTO {name} (payload, topic, hash, priority, delivery_time, failure_base_delay, visibility_timeout)"
-    "VALUES (%s, %s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIME), %s, %s)"
+    "VALUES (%s, %s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP), %s, %s)"
 )
 
 # Release stalled messages
-# Insert a row into the queue
 # format args:
 #   name -> table name
-# sql substitution args:
-# * topic
 SQL_UPDATE = """
 UPDATE {name} SET owner_id=NULL
-WHERE owner_id IS NOT NULL AND topic=%s
-    AND TIMESTAMPDIFF(SECOND, acquire_time, NOW()) > visibility_timeout
+    WHERE owner_id IS NOT NULL
+    AND TIMESTAMPDIFF(SECOND, acquire_time, CURRENT_TIMESTAMP) > visibility_timeout
 """
 
-# Acquire a message
-# format args:
-#   name -> table name
-SQL_UPDATE_2 = "UPDATE {name} SET owner_id=%s WHERE id=%s"
-
-# Release a message
-# format args:
-#   name -> table name
-# sql substitution args:
-# * owner id
-# * message id
-SQL_NACK = """
+# Can't guarantee that columns are updated in a particular
+# order in one update statement, so we do this in two steps.
+SQL_BATCH_NACK_1 = """
 UPDATE {name}
-   SET owner_id=NULL,
-       delivery_time=TIMESTAMPADD(SECOND, failure_base_delay * POW(2, failure_count), CURRENT_TIME),
-       failure_count = failure_count + 1
-   WHERE owner_id=%s AND id=%s
-"""
-SQL_BATCH_NACK = """
-UPDATE {name}
-   SET owner_id=NULL,
-       delivery_time=TIMESTAMPADD(SECOND, failure_base_delay * POW(2, failure_count), CURRENT_TIME),
-       failure_count = failure_count + 1
+   SET delivery_time=TIMESTAMPADD(SECOND, failure_base_delay * POW(2, failure_count), CURRENT_TIMESTAMP)
    WHERE owner_id=%s AND id IN %s
 """
-
-# Refresh the acquire time for a message
-SQL_TOUCH = """
+SQL_BATCH_NACK_2 = """
 UPDATE {name}
-   SET acquire_time = CURRENT_TIME
-   WHERE owner_id=%s AND id=%s
+   SET owner_id=NULL,
+       failure_count = failure_count + 1
+   WHERE owner_id=%s AND id IN %s
 """
 
 # Refresh the acquire time for a bunch of messages
 SQL_BATCH_TOUCH = """
 UPDATE {name}
-   SET acquire_time = CURRENT_TIME
+   SET acquire_time = CURRENT_TIMESTAMP
    WHERE owner_id=%s AND id IN %s
-"""
-
-# Find a message to acquire
-SQL_SELECT = """
-SELECT id, owner_id, payload FROM {name}
-    WHERE owner_id IS NULL AND topic=%s AND TIMESTAMPDIFF(SECOND, delivery_time, NOW()) >= 0
-    ORDER BY priority DESC, id ASC
-    LIMIT 1 FOR UPDATE SKIP LOCKED;
 """
 
 SQL_BATCH_SELECT = """
 SELECT id, owner_id, payload FROM {name}
-    WHERE owner_id IS NULL AND topic=%s AND TIMESTAMPDIFF(SECOND, delivery_time, NOW()) >= 0
+    WHERE owner_id IS NULL AND topic=%s AND TIMESTAMPDIFF(SECOND, delivery_time, CURRENT_TIMESTAMP) >= 0
     ORDER BY priority DESC, id ASC
     LIMIT %s FOR UPDATE SKIP LOCKED;
 """
@@ -118,10 +98,20 @@ SQL_BATCH_UPDATE = "UPDATE {name} SET owner_id=%s WHERE id IN %s"
 SQL_ACK = "DELETE FROM {name} WHERE id=%s"
 
 # Count messages in topic
-SQL_COUNT = "SELECT count(1) FROM {name} WHERE topic=%s AND owner_id IS NULL"
+SQL_GET_TOPIC_SIZE = "SELECT count(1) FROM {name} WHERE topic=%s AND owner_id IS NULL"
 
 # Count messages in all topics
-SQL_COUNT_2 = "SELECT topic, count(*) FROM {name} WHERE owner_id IS NULL GROUP BY topic"
+SQL_LIST_TOPICS = """
+SELECT topic, count(*) FROM {name}
+    WHERE owner_id IS NULL AND TIMESTAMPDIFF(SECOND, delivery_time, CURRENT_TIMESTAMP) >= 0
+    GROUP BY topic
+"""
+
+SQL_ACQUIRE_TOPIC = """
+SELECT DISTINCT topic FROM {messagetable}
+    WHERE owner_id IS NULL
+    AND topic NOT IN (SELECT topic FROM {locktable})
+"""
 
 
 class MySQLBackend(Backend):
@@ -133,7 +123,8 @@ class MySQLBackend(Backend):
         self.connection = connection
         self.prefix = prefix
         self.queue_table = f"{self.prefix}_queue"
-        self.owner_id = random.randint(0, 2**32 - 1)
+        self.lock_table = f"{self.prefix}_lock"
+        self.owner_id = random.randint(0, 2 ** 32 - 1)
 
     @property
     def max_payload_size(self) -> Optional[int]:
@@ -153,21 +144,23 @@ class MySQLBackend(Backend):
                     hash_size=self.hash_size,
                 )
             )
+            cur.execute(SQL_CREATE_LOCKS.format(name=self.lock_table))
             self.connection.commit()
 
     def destroy(self) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(SQL_DROP.format(name=self.queue_table))
+            cur.execute(SQL_DROP.format(name=self.lock_table))
             self.connection.commit()
 
     def batch_put(
-        self,
-        data: Iterable[Tuple[bytes, int, Optional[bytes]]],
-        priority: int,
-        delay: int,
-        failure_base_delay: int,
-        visibility_timeout: int,
+            self,
+            data: Iterable[Tuple[bytes, int, Optional[bytes]]],
+            priority: int,
+            delay: int,
+            failure_base_delay: int,
+            visibility_timeout: int,
     ) -> None:
         for payload, topic, hsh in data:
             if len(payload) > self.max_payload_size:
@@ -199,13 +192,10 @@ class MySQLBackend(Backend):
             )
             self.connection.commit()
 
-    def release_stalled_messages(self, topic: int) -> int:
+    def release_stalled_messages(self) -> int:
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(
-                SQL_UPDATE.format(name=self.queue_table),
-                args=(topic,),
-            )
+            cur.execute(SQL_UPDATE.format(name=self.queue_table))
             rows = cur.rowcount
             self.connection.commit()
             return rows
@@ -244,7 +234,11 @@ class MySQLBackend(Backend):
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
-                SQL_BATCH_NACK.format(name=self.queue_table),
+                SQL_BATCH_NACK_1.format(name=self.queue_table),
+                args=(self.owner_id, task_ids),
+            )
+            cur.execute(
+                SQL_BATCH_NACK_2.format(name=self.queue_table),
                 args=(self.owner_id, task_ids),
             )
             # TODO raise if it's already expired
@@ -263,7 +257,7 @@ class MySQLBackend(Backend):
     def get_topic_size(self, topic: int) -> int:
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(SQL_COUNT.format(name=self.queue_table), args=(topic,))
+            cur.execute(SQL_GET_TOPIC_SIZE.format(name=self.queue_table), args=(topic,))
             result = cur.fetchone()
             self.connection.commit()
             return result[0]
@@ -271,7 +265,61 @@ class MySQLBackend(Backend):
     def list_topics(self) -> List[Tuple[int, int]]:
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(SQL_COUNT_2.format(name=self.queue_table))
+            cur.execute(SQL_LIST_TOPICS.format(name=self.queue_table))
             rows = cur.fetchall()
             self.connection.commit()
         return rows
+
+    def acquire_topic(
+            self, topic_lock_visibility_timeout: int
+    ) -> Optional["TopicLock"]:
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(SQL_LIST_TOPICS.format(name=self.queue_table))
+            topics = list(cur.fetchall())
+            cur.execute(f"LOCK TABLE {self.lock_table} WRITE")
+
+            topics.sort(key=lambda x: -x[1])
+            new_lock = None
+            for topic, count in topics:
+                try:
+                    cur.execute(
+                        f"INSERT INTO {self.lock_table} (topic, owner_id, visibility_timeout) VALUES (%s, %s, %s)",
+                        args=(topic, self.owner_id, topic_lock_visibility_timeout))
+                except Exception:
+                    continue
+                new_lock = topic
+                break
+
+            self.connection.commit()
+
+            if new_lock is not None:
+                return TopicLock(new_lock, self)
+            return None
+
+    def batch_release_topic(self, topics: Iterable[int]) -> None:
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(f"""
+            DELETE FROM {self.lock_table} WHERE topic IN %s AND owner_id = %s
+            """, args=(topics, self.owner_id))
+            self.connection.commit()
+
+    def batch_touch_topic(self, topics: Iterable[int]) -> None:
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(f"""
+            UPDATE {self.lock_table} SET acquire_time=CURRENT_TIMESTAMP
+            WHERE topic IN %s AND owner_id = %s
+            """, args=(topics, self.owner_id))
+            self.connection.commit()
+
+    def release_stalled_topic_locks(self) -> None:
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(f"""
+            UPDATE {self.lock_table} SET owner_id=NULL
+            WHERE owner_id IS NOT NULL
+            AND TIMESTAMPDIFF(SECOND, acquire_time, CURRENT_TIMESTAMP) > visibility_timeout
+            """)
+            self.connection.commit()

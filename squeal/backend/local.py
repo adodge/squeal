@@ -1,7 +1,8 @@
 import time
 from collections import Counter
 from typing import List, Tuple, Iterable, Optional
-from .base import Backend, Message
+
+from .base import Backend, Message, TopicLock
 
 
 class LocalBackend(Backend):
@@ -13,11 +14,19 @@ class LocalBackend(Backend):
     def __init__(self):
         super().__init__()
         self.messages = []
+        self.topic_locks = {}
         self.unique_constraint = set()
         self.next_id = 0
         self.created = False
         self._max_payload_size = None
         self._hash_size = 16
+
+    def __enter__(self):
+        self.create()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.destroy()
 
     @property
     def max_payload_size(self) -> Optional[int]:
@@ -70,13 +79,11 @@ class LocalBackend(Backend):
             )
             self.next_id += 1
 
-    def release_stalled_messages(self, topic: int) -> int:
+    def release_stalled_messages(self) -> int:
         assert self.created
         now = time.time()
         n = 0
         for msg in self.messages:
-            if msg["topic"] != topic:
-                continue
             if not msg["acquired"]:
                 continue
             if msg["visibility_timeout"] + msg["acquire_time"] > now:
@@ -126,7 +133,7 @@ class LocalBackend(Backend):
         assert self.created
         to_nack = set(task_ids)
         for idx, msg in enumerate(self.messages):
-            if msg["id"] in to_nack:
+            if msg["id"] not in to_nack:
                 continue
             if not msg["acquired"]:
                 continue
@@ -135,6 +142,7 @@ class LocalBackend(Backend):
             delay = msg["failure_base_delay"] * (2 ** msg["failure_count"])
             msg["failure_count"] += 1
             msg["delivery_time"] = time.time() + delay
+            print(delay)
 
     def batch_touch(self, task_ids: Iterable[int]) -> None:
         assert self.created
@@ -175,3 +183,39 @@ class LocalBackend(Backend):
 
             n += 1
         return n
+
+    def acquire_topic(
+        self, topic_lock_visibility_timeout: int
+    ) -> Optional["TopicLock"]:
+        assert self.created
+        for topic, size in self.list_topics():
+            if topic not in self.topic_locks:
+                self.topic_locks[topic] = {
+                    "acquire_time": time.time(),
+                    "visibility_timeout": topic_lock_visibility_timeout,
+                }
+                return TopicLock(topic, self)
+        return None
+
+    def batch_release_topic(self, topics: Iterable[int]) -> None:
+        assert self.created
+        for topic in topics:
+            if topic in self.topic_locks:
+                del self.topic_locks[topic]
+
+    def batch_touch_topic(self, topics: Iterable[int]) -> None:
+        assert self.created
+        for topic in topics:
+            if topic not in self.topic_locks:
+                continue
+            self.topic_locks[topic]["acquire_time"] = time.time()
+
+    def release_stalled_topic_locks(self) -> None:
+        assert self.created
+        to_release = [
+            topic
+            for topic, meta in self.topic_locks.items()
+            if meta["acquire_time"] + meta["visibility_timeout"] < time.time()
+        ]
+        for topic in to_release:
+            del self.topic_locks[topic]

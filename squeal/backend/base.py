@@ -30,7 +30,7 @@ class Backend(abc.ABC):
     ) -> None:
         raise NotImplementedError
 
-    def release_stalled_messages(self, topic: int) -> int:
+    def release_stalled_messages(self) -> int:
         raise NotImplementedError
 
     def ack(self, task_id: int) -> None:
@@ -51,16 +51,12 @@ class Backend(abc.ABC):
     def get_topic_size(self, topic: int) -> int:
         raise NotImplementedError
 
-    def acquire_topic(self, topic_lock_visibility_timeout: int) -> "TopicLock":
-        raise NotImplementedError
-
-    def release_topic(self, topic: int) -> None:
+    def acquire_topic(
+        self, topic_lock_visibility_timeout: int
+    ) -> Optional["TopicLock"]:
         raise NotImplementedError
 
     def batch_release_topic(self, topics: Iterable[int]) -> None:
-        raise NotImplementedError
-
-    def touch_topic(self, topic: int) -> None:
         raise NotImplementedError
 
     def batch_touch_topic(self, topics: Iterable[int]) -> None:
@@ -71,7 +67,24 @@ class Backend(abc.ABC):
 
 
 class TopicLock:
-    pass
+    def __init__(self, idx: int, backend: Backend):
+        self.idx = idx
+        self.backend = backend
+        self.released = False
+
+    def __str__(self):
+        return f"TopicLock({self.idx})"
+
+    def release(self):
+        if self.released:
+            raise RuntimeError("Lock has already been released")
+        self.backend.batch_release_topic([self.idx])
+        self.released = True
+
+    def touch(self):
+        if self.released:
+            raise RuntimeError("Lock has already been released")
+        self.backend.batch_touch_topic([self.idx])
 
 
 class Message:

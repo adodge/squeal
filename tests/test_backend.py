@@ -1,0 +1,197 @@
+import time
+from typing import Type
+
+import pytest
+
+from squeal.backend.base import Backend
+from squeal.backend.local import LocalBackend
+from .common import TemporaryMySQLBackend
+
+
+@pytest.mark.parametrize("backend_class", [TemporaryMySQLBackend, LocalBackend])
+class TestBackend:
+    def test_create_destroy(self, backend_class: Type[Backend]):
+        backend = backend_class()
+        backend.create()
+        backend.destroy()
+
+    def test_release_stalled(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"test_release_stalled", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+
+            x = bk.batch_get(topic=1, size=1)[0]
+            assert b"test_release_stalled" == x.payload
+
+            time.sleep(1)
+            assert 1 == bk.release_stalled_messages()
+
+            y = bk.batch_get(topic=1, size=1)[0]
+            assert b"test_release_stalled" == y.payload
+
+    def test_ack(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"test_ack", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+
+            x = bk.batch_get(topic=1, size=1)[0]
+            assert b"test_ack" == x.payload
+            x.ack()
+
+            time.sleep(1)
+            bk.release_stalled_messages()
+
+            assert 0 == len(bk.batch_get(topic=1, size=1))
+
+    def test_nack(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"test_ack", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+
+            x = bk.batch_get(topic=1, size=1)[0]
+            assert b"test_ack" == x.payload
+
+            assert 0 == len(bk.batch_get(topic=1, size=1))
+
+            x.nack()
+
+            z = bk.batch_get(topic=1, size=1)[0]
+            assert z is not None
+
+    def test_message_context_manager(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"test_ack", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+
+            with bk.batch_get(topic=1, size=1)[0] as task:
+                assert task is not None
+                pass
+
+            assert not task.status
+            time.sleep(1)
+
+            with bk.batch_get(topic=1, size=1)[0] as task:
+                assert task is not None
+                task.ack()
+                pass
+
+            assert task.status
+            time.sleep(1)
+
+            assert 0 == len(bk.batch_get(topic=1, size=1))
+
+    def test_priority(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"a", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            bk.batch_put(
+                [(b"b", 1, None)],
+                priority=1,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+
+            msg = bk.batch_get(topic=1, size=1)[0]
+            assert b"b" == msg.payload
+
+    def test_batch_get_empty(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            msgs = bk.batch_get(topic=1, size=2)
+            assert 0 == len(msgs)
+
+    def test_batch_get_less_than_full(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"b", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            msgs = bk.batch_get(topic=1, size=2)
+            assert 1 == len(msgs)
+            assert 0 == bk.get_topic_size(topic=1)
+
+    def test_batch_get_full(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"b", 1, None)]*2,
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            msgs = bk.batch_get(topic=1, size=2)
+            assert 2 == len(msgs)
+            assert 0 == bk.get_topic_size(topic=1)
+
+    def test_batch_get_overfull(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"b", 1, None)]*3,
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            msgs = bk.batch_get(topic=1, size=2)
+            assert 2 == len(msgs)
+            assert 1 == bk.get_topic_size(topic=1)
+
+    def test_batch_put(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                data=[(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            assert 3 == bk.get_topic_size(topic=1)
+            msgs = bk.batch_get(topic=1, size=3)
+            assert 3 == len(msgs)
+            assert 0 == bk.get_topic_size(topic=1)
+
+    def test_topic_acquire(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            bk.batch_put(
+                data=[(b"a", 1, None), (b"b", 2, None), (b"c", 3, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+
+            a = bk.acquire_topic(600)
+            b = bk.acquire_topic(600)
+            c = bk.acquire_topic(600)
+            d = bk.acquire_topic(600)
+
+            assert {a.idx, b.idx, c.idx} == {1, 2, 3}
+            assert d is None

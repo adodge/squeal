@@ -1,97 +1,189 @@
 import time
-from unittest import TestCase
+from typing import Type
+
+import pytest
+
 from squeal import Queue
+from squeal.backend.base import Backend
 from squeal.backend.local import LocalBackend
+from .common import TemporaryMySQLBackend
 
 
-class TestQueue(TestCase):
-    def test_put_get(self):
-        q = Queue(LocalBackend())
-        q.put(b"a", topic=1)
-        msg = q.get(topic=1)
-        self.assertEqual(b"a", msg.payload)
+@pytest.mark.parametrize("backend_class", [TemporaryMySQLBackend, LocalBackend])
+class TestMySQLQueue:
+    def test_queue_topics_dont_interfere(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
 
-    def test_delay(self):
-        q = Queue(LocalBackend(), new_message_delay=1)
-        q.put(b"a", topic=1)
-        self.assertIsNone(q.get(topic=1))
-        time.sleep(1.1)
-        x = q.get(topic=1)
-        self.assertEqual(b"a", x.payload)
+            q.put(b"a", topic=1)
+            assert q.get(topic=2) is None
 
-    def test_visibility_timeout(self):
-        q = Queue(LocalBackend(), visibility_timeout=1)
-        q.put(b"a", topic=1)
-        q.get(topic=1)
-        self.assertIsNone(q.get(topic=1))
-        time.sleep(1.1)
-        x = q.get(topic=1)
-        self.assertEqual(b"a", x.payload)
+            q.put(b"b", topic=2)
+            assert q.get(topic=2) is not None
 
-    def test_queue_topics_dont_interfere(self):
-        q = Queue(LocalBackend())
-        q.put(b"a", topic=1)
+    def test_queue_topics(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            for _ in range(1):
+                q.put(b"", topic=1)
+            for _ in range(5):
+                q.put(b"", topic=2)
+            for _ in range(4):
+                q.put(b"", topic=3)
 
-        self.assertIsNone(q.get(topic=2))
+            topics = dict(q.list_topics())
+            assert {1: 1, 2: 5, 3: 4} == topics
 
-        q.put(b"b", topic=2)
+            assert 0 == q.get_topic_size(100)
+            assert 1 == q.get_topic_size(1)
+            assert 5 == q.get_topic_size(2)
+            assert 4 == q.get_topic_size(3)
 
-        x = q.get(topic=2)
-        self.assertIsNotNone(x)
+            x = q.get(topic=3)
+            assert x is not None
 
-    def test_queue_topics(self):
-        q = Queue(LocalBackend())
-        for _ in range(1):
-            q.put(b"", topic=1)
-        for _ in range(5):
-            q.put(b"", topic=2)
-        for _ in range(4):
-            q.put(b"", topic=3)
+            assert 3 == q.get_topic_size(3)
 
-        topics = dict(q.list_topics())
-        self.assertEqual(
-            {
-                1: 1,
-                2: 5,
-                3: 4,
-            },
-            topics,
-        )
-        self.assertEqual(0, q.get_topic_size(100))
-        self.assertEqual(5, q.get_topic_size(2))
+    def test_queue_put_get_destroy(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            q.put(b"test_queue_put_get_destroy", topic=1)
+            ret = q.get(topic=1)
 
-    def test_priority(self):
-        q = Queue(LocalBackend())
-        q.put(b"a", topic=1, priority=0)
-        q.put(b"b", topic=1, priority=1)
+            assert b"test_queue_put_get_destroy" == ret.payload
 
-        msg = q.get(topic=1)
-        self.assertEqual(b"b", msg.payload)
+    def test_get_nothing(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            assert q.get(topic=1) is None
 
-    def test_batch_get(self):
-        q = Queue(LocalBackend())
-        q.put(b"a", topic=1, priority=0)
-        q.put(b"b", topic=1, priority=1)
+    def test_no_double_get(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
 
-        msgs = q.batch_get(topics=[(1, 2)])
-        self.assertEqual(2, len(msgs))
+            q.put(b"test_no_double_get", topic=1)
+            ret = q.get(topic=1)
 
-    def test_hash_uniqueness(self):
-        q = Queue(LocalBackend())
-        q.put(b"", topic=1, priority=0, hsh=b"0000000000000000")
-        q.put(b"", topic=1, priority=100, hsh=b"0000000000000001")
-        with self.assertRaises(Exception):
+            assert b"test_no_double_get" == ret.payload
+
+            assert q.get(topic=1) is None
+
+    def test_queue_automatic_release(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk, visibility_timeout=1)
+            q.put(b"test_queue_automatic_release", topic=1)
+
+            x = q.get(topic=1)
+            assert b"test_queue_automatic_release" == x.payload
+
+            time.sleep(2)
+
+            y = q.get(topic=1)
+            assert b"test_queue_automatic_release" == y.payload
+
+    def test_queue_nack(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk, failure_base_delay=0)
+            q.put(b"test_queue_nack", topic=1)
+
+            x = q.get(topic=1)
+            assert b"test_queue_nack" == x.payload
+
+            time.sleep(2)
+
+            assert q.get(topic=1) is None
+
+            x.nack()
+            z = q.get(topic=1)
+            assert b"test_queue_nack" == z.payload
+
+    def test_hash_uniqueness(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            q.put(b"", topic=1, priority=0, hsh=b"0000000000000000")
+            q.put(b"", topic=1, priority=100, hsh=b"0000000000000001")
+            with pytest.raises(Exception):
+                q.put(b"", topic=1, hsh=b"0000000000000001")
+
+            x = q.get(topic=1)
+            x.ack()
+
             q.put(b"", topic=1, hsh=b"0000000000000001")
 
-        x = q.get(topic=1)
-        x.ack()
+    def test_batch_put(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            q.batch_put([(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)])
+            assert 3 == q.get_topic_size(topic=1)
+            msgs = q.batch_get(topics=[(1, 3)])
+            assert 3 == len(msgs)
+            assert 0 == q.get_topic_size(topic=1)
 
-        q.put(b"", topic=1, hsh=b"0000000000000001")
+    def test_batch_get(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            q.put(b"a", topic=1, priority=0)
+            q.put(b"b", topic=1, priority=1)
 
-    def test_batch_put(self):
-        q = Queue(LocalBackend())
-        q.batch_put([(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)])
-        self.assertEqual(3, q.get_topic_size(topic=1))
-        msgs = q.batch_get(topics=[(1, 3)])
-        self.assertEqual(3, len(msgs))
-        self.assertEqual(0, q.get_topic_size(topic=1))
+            msgs = q.batch_get(topics=[(1, 2)])
+            assert 2 == len(msgs)
+
+    def test_put_get(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            q.put(b"a", topic=1)
+            msg = q.get(topic=1)
+            assert b"a" == msg.payload
+
+    def test_delay(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk, new_message_delay=1)
+            q.put(b"a", topic=1)
+            assert q.get(topic=1) is None
+            time.sleep(1.1)
+            x = q.get(topic=1)
+            assert b"a" == x.payload
+
+    def test_visibility_timeout(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk, visibility_timeout=1)
+            q.put(b"a", topic=1)
+            q.get(topic=1)
+            assert q.get(topic=1) is None
+            time.sleep(2)
+            x = q.get(topic=1)
+            assert b"a" == x.payload
+
+    def test_priority(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            q.put(b"a", topic=1, priority=0)
+            q.put(b"b", topic=1, priority=1)
+
+            msg = q.get(topic=1)
+            assert b"b" == msg.payload
+
+    def test_topic_lock_with_no_topics(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+
+            topic = q.acquire_topic()
+            assert topic is None
+
+    def test_topic_lock(self, backend_class: Type[Backend]):
+        with backend_class() as bk:
+            q = Queue(bk)
+            q.put(b"", topic=1)
+
+            topic = q.acquire_topic()
+            assert topic.idx == 1
+
+            topic2 = q.acquire_topic()
+            assert topic2 is None
+
+            assert len(q.list_held_topics()) == 1
+            topic.release()
+            assert len(q.list_held_topics()) == 0
+
+            topic3 = q.acquire_topic()
+            assert topic3.idx == 1

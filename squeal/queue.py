@@ -22,8 +22,8 @@ class Queue:
         self.visibility_timeout = visibility_timeout
         self.topic_lock_visibility_timeout = topic_lock_visibility_timeout
 
-        self.messages: Dict[int, "Message"] = {}
-        self.held_topics: Dict[int, "TopicLock"] = {}
+        self._held_messages: Dict[int, "Message"] = {}
+        self._held_topics: Dict[int, "TopicLock"] = {}
 
         if self.new_message_delay < 0:
             raise RuntimeError("Delay must be non-negative")
@@ -63,37 +63,32 @@ class Queue:
 
     def batch_get(self, topics: Iterable[Tuple[int, int]]) -> List["Message"]:
         out = []
+        self.backend.release_stalled_messages()
         for topic, size in topics:
             if size <= 0:
                 continue
             topic_msgs = self.backend.batch_get(topic, size)
-            if len(topic_msgs) < size:
-                # XXX consider moving this behavior into the Backend
-                if self.backend.release_stalled_messages(topic) > 0:
-                    topic_msgs.extend(
-                        self.backend.batch_get(topic, size - len(topic_msgs))
-                    )
             out.extend(topic_msgs)
         for msg in out:
-            self.messages[msg.idx] = msg
+            self._held_messages[msg.idx] = msg
         return out
 
-    def _prune_stored_messages(self):
+    def _prune_held_messages(self):
         # XXX
-        released = [msg.idx for msg in self.messages.values() if msg.released]
+        released = [msg.idx for msg in self._held_messages.values() if msg.released]
         for idx in released:
-            del self.messages[idx]
+            del self._held_messages[idx]
 
     def touch_all(self) -> None:
         # XXX
-        self._prune_stored_messages()
-        self.backend.batch_touch(self.messages.keys())
+        self._prune_held_messages()
+        self.backend.batch_touch(self._held_messages.keys())
 
     def nack_all(self) -> None:
         # XXX
-        self._prune_stored_messages()
-        self.backend.batch_nack(self.messages.keys())
-        self.messages.clear()
+        self._prune_held_messages()
+        self.backend.batch_nack(self._held_messages.keys())
+        self._held_messages.clear()
 
     def list_topics(self) -> List[Tuple[int, int]]:
         return self.backend.list_topics()
@@ -101,19 +96,34 @@ class Queue:
     def get_topic_size(self, topic: int) -> int:
         return self.backend.get_topic_size(topic)
 
-    def acquire_topic(self) -> "TopicLock":
+    def _prune_held_topics(self):
+        # XXX
+        released = [i for i,t in self._held_topics.items() if t.released]
+        for i in released:
+            del self._held_topics[i]
+
+    def acquire_topic(self) -> Optional["TopicLock"]:
+        self.backend.release_stalled_topic_locks()
         topic = self.backend.acquire_topic(
             topic_lock_visibility_timeout=self.topic_lock_visibility_timeout
         )
-        self.held_topics[topic.idx] = topic
+        if topic is None:
+            return None
+        self._held_topics[topic.idx] = topic
         return topic
 
     def release_topics(self) -> None:
-        self.backend.batch_release_topic(self.held_topics.keys())
-        self.held_topics = {}
+        self._prune_held_topics()
+        self.backend.batch_release_topic(self._held_topics.keys())
+        self._held_topics = {}
 
     def touch_topics(self) -> None:
-        self.backend.batch_touch_topic(self.held_topics.keys())
+        self._prune_held_topics()
+        self.backend.batch_touch_topic(self._held_topics.keys())
+
+    def list_held_topics(self) -> List["TopicLock"]:
+        self._prune_held_topics()
+        return list(self._held_topics.values())
 
 
 __all__ = ["Queue"]

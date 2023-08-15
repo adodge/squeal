@@ -88,11 +88,13 @@ class TopicLock:
 
 
 class Message:
-    def __init__(self, payload: bytes, idx: int, backend: Backend):
+    FIELDS = ['payload', 'idx', 'backend', 'status']
+
+    def __init__(self, payload: bytes, idx: int, backend: Backend, status: Optional[bool] = None):
         self.payload = payload
         self.idx = idx
         self.backend = backend
-        self.status = None
+        self.status = status
 
     def __enter__(self):
         return self

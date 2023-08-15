@@ -117,6 +117,13 @@ class Queue:
         self.backend.batch_release_topic(self._held_topics.keys())
         self._held_topics = {}
 
+    def release_topic(self, topic: int) -> None:
+        self._prune_held_topics()
+        if topic not in self._held_topics:
+            return
+        self.backend.batch_release_topic([topic])
+        self._prune_held_topics()
+
     def touch_topics(self) -> None:
         self._prune_held_topics()
         self.backend.batch_touch_topic(self._held_topics.keys())

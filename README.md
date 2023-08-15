@@ -1,4 +1,4 @@
-# `squeal`: SQL-Backed Message Queue
+# squeal: SQL-Backed Message Queue
 
 A python library implementing a message queue using a relational database as the storage backend.
 

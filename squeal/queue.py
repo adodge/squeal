@@ -98,7 +98,7 @@ class Queue:
 
     def _prune_held_topics(self):
         # XXX
-        released = [i for i,t in self._held_topics.items() if t.released]
+        released = [i for i, t in self._held_topics.items() if t.released]
         for i in released:
             del self._held_topics[i]
 

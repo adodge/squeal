@@ -21,13 +21,6 @@ class LocalBackend(Backend):
         self._max_payload_size = None
         self._hash_size = 16
 
-    def __enter__(self):
-        self.create()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.destroy()
-
     @property
     def max_payload_size(self) -> Optional[int]:
         return self._max_payload_size
@@ -210,7 +203,7 @@ class LocalBackend(Backend):
                 continue
             self.topic_locks[topic]["acquire_time"] = time.time()
 
-    def release_stalled_topic_locks(self) -> None:
+    def release_stalled_topic_locks(self) -> int:
         assert self.created
         to_release = [
             topic
@@ -219,3 +212,4 @@ class LocalBackend(Backend):
         ]
         for topic in to_release:
             del self.topic_locks[topic]
+        return len(to_release)

@@ -1,8 +1,8 @@
-import abc
+from abc import ABC
 from typing import List, Tuple, Iterable, Optional
 
 
-class Backend(abc.ABC):
+class Backend(ABC):
     def __init__(self, *args, **kwargs):
         pass
 
@@ -62,7 +62,7 @@ class Backend(abc.ABC):
     def batch_touch_topic(self, topics: Iterable[int]) -> None:
         raise NotImplementedError
 
-    def release_stalled_topic_locks(self) -> None:
+    def release_stalled_topic_locks(self) -> int:
         raise NotImplementedError
 
 

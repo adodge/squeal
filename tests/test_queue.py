@@ -4,14 +4,16 @@ from typing import Type
 import pytest
 
 from squeal import Queue
-from squeal.backend.base import Backend
-from squeal.backend.local import LocalBackend
-from .common import TemporaryMySQLBackend
+from .common import TemporaryMySQLBackend, TemporaryLocalBackend, TemporaryBackendMixin
 
 
-@pytest.mark.parametrize("backend_class", [TemporaryMySQLBackend, LocalBackend])
+@pytest.mark.parametrize(
+    "backend_class", [TemporaryMySQLBackend, TemporaryLocalBackend]
+)
 class TestMySQLQueue:
-    def test_queue_topics_dont_interfere(self, backend_class: Type[Backend]):
+    def test_queue_topics_dont_interfere(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
         with backend_class() as bk:
             q = Queue(bk)
 
@@ -21,7 +23,7 @@ class TestMySQLQueue:
             q.put(b"b", topic=2)
             assert q.get(topic=2) is not None
 
-    def test_queue_topics(self, backend_class: Type[Backend]):
+    def test_queue_topics(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             for _ in range(1):
@@ -44,7 +46,7 @@ class TestMySQLQueue:
 
             assert 3 == q.get_topic_size(3)
 
-    def test_queue_put_get_destroy(self, backend_class: Type[Backend]):
+    def test_queue_put_get_destroy(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             q.put(b"test_queue_put_get_destroy", topic=1)
@@ -52,12 +54,12 @@ class TestMySQLQueue:
 
             assert b"test_queue_put_get_destroy" == ret.payload
 
-    def test_get_nothing(self, backend_class: Type[Backend]):
+    def test_get_nothing(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             assert q.get(topic=1) is None
 
-    def test_no_double_get(self, backend_class: Type[Backend]):
+    def test_no_double_get(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
 
@@ -68,7 +70,7 @@ class TestMySQLQueue:
 
             assert q.get(topic=1) is None
 
-    def test_queue_automatic_release(self, backend_class: Type[Backend]):
+    def test_queue_automatic_release(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk, visibility_timeout=1)
             q.put(b"test_queue_automatic_release", topic=1)
@@ -81,7 +83,7 @@ class TestMySQLQueue:
             y = q.get(topic=1)
             assert b"test_queue_automatic_release" == y.payload
 
-    def test_queue_nack(self, backend_class: Type[Backend]):
+    def test_queue_nack(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk, failure_base_delay=0)
             q.put(b"test_queue_nack", topic=1)
@@ -97,7 +99,7 @@ class TestMySQLQueue:
             z = q.get(topic=1)
             assert b"test_queue_nack" == z.payload
 
-    def test_hash_uniqueness(self, backend_class: Type[Backend]):
+    def test_hash_uniqueness(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             q.put(b"", topic=1, priority=0, hsh=b"0000000000000000")
@@ -110,7 +112,7 @@ class TestMySQLQueue:
 
             q.put(b"", topic=1, hsh=b"0000000000000001")
 
-    def test_batch_put(self, backend_class: Type[Backend]):
+    def test_batch_put(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             q.batch_put([(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)])
@@ -119,7 +121,7 @@ class TestMySQLQueue:
             assert 3 == len(msgs)
             assert 0 == q.get_topic_size(topic=1)
 
-    def test_batch_get(self, backend_class: Type[Backend]):
+    def test_batch_get(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             q.put(b"a", topic=1, priority=0)
@@ -128,14 +130,14 @@ class TestMySQLQueue:
             msgs = q.batch_get(topics=[(1, 2)])
             assert 2 == len(msgs)
 
-    def test_put_get(self, backend_class: Type[Backend]):
+    def test_put_get(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             q.put(b"a", topic=1)
             msg = q.get(topic=1)
             assert b"a" == msg.payload
 
-    def test_delay(self, backend_class: Type[Backend]):
+    def test_delay(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk, new_message_delay=1)
             q.put(b"a", topic=1)
@@ -144,7 +146,7 @@ class TestMySQLQueue:
             x = q.get(topic=1)
             assert b"a" == x.payload
 
-    def test_visibility_timeout(self, backend_class: Type[Backend]):
+    def test_visibility_timeout(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk, visibility_timeout=1)
             q.put(b"a", topic=1)
@@ -154,7 +156,7 @@ class TestMySQLQueue:
             x = q.get(topic=1)
             assert b"a" == x.payload
 
-    def test_priority(self, backend_class: Type[Backend]):
+    def test_priority(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             q.put(b"a", topic=1, priority=0)
@@ -163,14 +165,16 @@ class TestMySQLQueue:
             msg = q.get(topic=1)
             assert b"b" == msg.payload
 
-    def test_topic_lock_with_no_topics(self, backend_class: Type[Backend]):
+    def test_topic_lock_with_no_topics(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
         with backend_class() as bk:
             q = Queue(bk)
 
             topic = q.acquire_topic()
             assert topic is None
 
-    def test_topic_lock(self, backend_class: Type[Backend]):
+    def test_topic_lock(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
             q.put(b"", topic=1)

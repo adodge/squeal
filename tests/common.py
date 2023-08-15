@@ -1,7 +1,11 @@
 import os
+from abc import ABC
+
 import petname
 import pymysql
 from squeal import MySQLBackend
+from squeal.backend.base import Backend
+from squeal.backend.local import LocalBackend
 
 SQUEAL_TEST_HOSTNAME = os.environ.get("SQUEAL_TEST_HOSTNAME", "localhost")
 SQUEAL_TEST_PORT = os.environ.get("SQUEAL_TEST_PORT", "3306")
@@ -28,7 +32,16 @@ def temporary_name():
     return petname.Generate(3, separator="")
 
 
-class TemporaryMySQLBackend(MySQLBackend):
+class TemporaryBackendMixin(Backend, ABC):
+    def __enter__(self):
+        self.create()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.destroy()
+
+
+class TemporaryMySQLBackend(MySQLBackend, TemporaryBackendMixin):
     def __init__(self, **kwargs):
         if "connection" not in kwargs:
             kwargs["connection"] = get_connection()
@@ -36,6 +49,8 @@ class TemporaryMySQLBackend(MySQLBackend):
             kwargs["prefix"] = temporary_name()
         super().__init__(**kwargs)
 
+
+class TemporaryLocalBackend(LocalBackend, TemporaryBackendMixin):
     def __enter__(self):
         self.create()
         return self

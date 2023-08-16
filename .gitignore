@@ -1,5 +1,5 @@
 dist
-squeal.egg-info
+squeal_queue.egg-info
 .idea
 .pytest_cache
 venv

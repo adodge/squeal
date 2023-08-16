@@ -2,8 +2,7 @@ from typing import Type
 
 import pytest
 
-from squeal import Queue
-from squeal.buffer import Buffer
+from squeal import Queue, Buffer
 from .common import TemporaryMySQLBackend, TemporaryLocalBackend, TemporaryBackendMixin
 
 

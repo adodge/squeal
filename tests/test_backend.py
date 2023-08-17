@@ -292,3 +292,63 @@ class TestBackend:
     def test_touching_no_topics(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             bk.batch_touch_topic([])
+
+    def test_touching_non_list_collection(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            bk.batch_put(
+                data=[(b"a", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            msgs = bk.batch_get(1, 1)
+            msgs = {m.idx: m for m in msgs}
+            bk.batch_touch(msgs.keys())
+
+    def test_nacking_non_list_collection(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            bk.batch_put(
+                data=[(b"a", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            msgs = bk.batch_get(1, 1)
+            msgs = {m.idx: m for m in msgs}
+            bk.batch_nack(msgs.keys())
+
+    def test_releasing_non_list_collection(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            bk.batch_put(
+                data=[(b"a", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            msgs = bk.batch_get(1, 1)
+            msgs = {m.idx: m for m in msgs}
+            bk.batch_release_topic(msgs.keys())
+
+    def test_touching_topics_non_list_collection(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            bk.batch_put(
+                data=[(b"a", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            msgs = bk.batch_get(1, 1)
+            msgs = {m.idx: m for m in msgs}
+            bk.batch_touch_topic(msgs.keys())

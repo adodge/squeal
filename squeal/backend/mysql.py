@@ -239,11 +239,11 @@ class MySQLBackend(Backend):
             self.connection.begin()
             cur.execute(
                 SQL_BATCH_NACK_1.format(name=self.queue_table),
-                args=(self.owner_id, task_ids),
+                args=(self.owner_id, list(task_ids)),
             )
             cur.execute(
                 SQL_BATCH_NACK_2.format(name=self.queue_table),
-                args=(self.owner_id, task_ids),
+                args=(self.owner_id, list(task_ids)),
             )
             # TODO raise if it's already expired
             self.connection.commit()
@@ -255,7 +255,7 @@ class MySQLBackend(Backend):
             self.connection.begin()
             cur.execute(
                 SQL_BATCH_TOUCH.format(name=self.queue_table),
-                args=(self.owner_id, task_ids),
+                args=(self.owner_id, list(task_ids)),
             )
             # TODO raise if it's already expired
             self.connection.commit()

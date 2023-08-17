@@ -276,3 +276,19 @@ class TestBackend:
             assert 1 == bk.release_stalled_topic_locks()
             c = bk.acquire_topic(1)
             assert c.idx == 1
+
+    def test_touching_no_messages(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            bk.batch_touch([])
+
+    def test_nacking_no_messages(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            bk.batch_nack([])
+
+    def test_releasing_no_topics(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            bk.batch_release_topic([])
+
+    def test_touching_no_topics(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            bk.batch_touch_topic([])

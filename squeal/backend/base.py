@@ -39,10 +39,10 @@ class Backend(ABC):
     def batch_get(self, topic: int, size: int) -> List["Message"]:
         raise NotImplementedError
 
-    def batch_nack(self, task_ids: Iterable[int]) -> None:
+    def batch_nack(self, task_ids: Collection[int]) -> None:
         raise NotImplementedError
 
-    def batch_touch(self, task_ids: Iterable[int]) -> None:
+    def batch_touch(self, task_ids: Collection[int]) -> None:
         raise NotImplementedError
 
     def list_topics(self) -> List[Tuple[int, int]]:
@@ -56,10 +56,10 @@ class Backend(ABC):
     ) -> Optional["TopicLock"]:
         raise NotImplementedError
 
-    def batch_release_topic(self, topics: Iterable[int]) -> None:
+    def batch_release_topic(self, topics: Collection[int]) -> None:
         raise NotImplementedError
 
-    def batch_touch_topic(self, topics: Iterable[int]) -> None:
+    def batch_touch_topic(self, topics: Collection[int]) -> None:
         raise NotImplementedError
 
     def release_stalled_topic_locks(self) -> int:

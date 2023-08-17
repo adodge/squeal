@@ -232,7 +232,9 @@ class MySQLBackend(Backend):
             # TODO raise if it's already expired
             self.connection.commit()
 
-    def batch_nack(self, task_ids: Iterable[int]) -> None:
+    def batch_nack(self, task_ids: Collection[int]) -> None:
+        if len(task_ids) == 0:
+            return
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
@@ -246,7 +248,9 @@ class MySQLBackend(Backend):
             # TODO raise if it's already expired
             self.connection.commit()
 
-    def batch_touch(self, task_ids: Iterable[int]) -> None:
+    def batch_touch(self, task_ids: Collection[int]) -> None:
+        if len(task_ids) == 0:
+            return
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
@@ -300,7 +304,9 @@ class MySQLBackend(Backend):
                 return TopicLock(new_lock, self)
             return None
 
-    def batch_release_topic(self, topics: Iterable[int]) -> None:
+    def batch_release_topic(self, topics: Collection[int]) -> None:
+        if len(topics) == 0:
+            return
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
@@ -311,7 +317,9 @@ class MySQLBackend(Backend):
             )
             self.connection.commit()
 
-    def batch_touch_topic(self, topics: Iterable[int]) -> None:
+    def batch_touch_topic(self, topics: Collection[int]) -> None:
+        if len(topics) == 0:
+            return
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(

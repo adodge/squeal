@@ -126,7 +126,7 @@ class LocalBackend(Backend):
             self.unique_constraint.remove(k)
         del self.messages[idx]
 
-    def batch_nack(self, task_ids: Iterable[int]) -> None:
+    def batch_nack(self, task_ids: Collection[int]) -> None:
         assert self.created
         to_nack = set(task_ids)
         for idx, msg in enumerate(self.messages):
@@ -141,7 +141,7 @@ class LocalBackend(Backend):
             msg["delivery_time"] = time.time() + delay
             print(delay)
 
-    def batch_touch(self, task_ids: Iterable[int]) -> None:
+    def batch_touch(self, task_ids: Collection[int]) -> None:
         assert self.created
         to_touch = set(task_ids)
         for msg in self.messages:
@@ -194,13 +194,13 @@ class LocalBackend(Backend):
                 return TopicLock(topic, self)
         return None
 
-    def batch_release_topic(self, topics: Iterable[int]) -> None:
+    def batch_release_topic(self, topics: Collection[int]) -> None:
         assert self.created
         for topic in topics:
             if topic in self.topic_locks:
                 del self.topic_locks[topic]
 
-    def batch_touch_topic(self, topics: Iterable[int]) -> None:
+    def batch_touch_topic(self, topics: Collection[int]) -> None:
         assert self.created
         for topic in topics:
             if topic not in self.topic_locks:

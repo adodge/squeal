@@ -178,6 +178,63 @@ class TestBackend:
             assert 3 == len(msgs)
             assert 0 == bk.get_topic_size(topic=1)
 
+    def test_uniqueness(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            bk.batch_put(
+                data=[
+                    (b"a", 1, b"0000000000000000"),
+                    (b"b", 1, b"0000000000000001"),
+                    (b"c", 1, b"0000000000000002"),
+                ],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            assert bk.get_topic_size(1) == 3
+
+    def test_uniqueness_doesnt_preclude_redoing_messages(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            bk.batch_put(
+                data=[(b"a", 1, b"0000000000000000")],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            assert bk.get_topic_size(1) == 1
+            msg = bk.batch_get(1, 1)[0]
+            msg.ack()
+
+            assert bk.get_topic_size(1) == 0
+
+            bk.batch_put(
+                data=[(b"a", 1, b"0000000000000000")],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            assert bk.get_topic_size(1) == 1
+
+    def test_uniqueness_violation(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            n_rows = bk.batch_put(
+                data=[
+                    (b"a", 1, b"0000000000000000"),
+                    (b"b", 1, b"0000000000000001"),
+                    (b"c", 1, b"0000000000000001"),
+                ],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                visibility_timeout=0,
+            )
+            assert n_rows == 2
+            assert bk.get_topic_size(1) == 2
+
     def test_topic_acquire(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             bk.batch_put(

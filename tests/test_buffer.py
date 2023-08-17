@@ -13,8 +13,7 @@ class TestBackend:
     def test_buffer_activity(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             bk.batch_put(
-                [(b"a", 1, None)]*100
-                + [(b"b", 2, None)]*100,
+                [(b"a", 1, None)] * 100 + [(b"b", 2, None)] * 100,
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
@@ -25,7 +24,7 @@ class TestBackend:
             msg = buf.get()
             msg2 = buf.get()
 
-            assert {msg.payload, msg2.payload} == {b'a', b'b'}
+            assert {msg.payload, msg2.payload} == {b"a", b"b"}
 
             msg3 = buf.get()
             assert msg3 is None

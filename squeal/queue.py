@@ -1,4 +1,4 @@
-from typing import Tuple, List, Dict, Iterable, Optional
+from typing import Tuple, List, Dict, Iterable, Optional, Collection
 from squeal.backend.base import Backend, Message, TopicLock
 
 
@@ -43,13 +43,13 @@ class Queue:
 
     def put(
         self, item: bytes, topic: int, hsh: Optional[bytes] = None, priority: int = 0
-    ) -> None:
+    ) -> int:
         return self.batch_put(items=[(item, topic, hsh)], priority=priority)
 
     def batch_put(
-        self, items: Iterable[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
-    ) -> None:
-        self.backend.batch_put(
+        self, items: Collection[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
+    ) -> int:
+        return self.backend.batch_put(
             items,
             priority,
             self.new_message_delay,

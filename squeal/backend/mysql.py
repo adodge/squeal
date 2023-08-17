@@ -1,5 +1,5 @@
 import random
-from typing import List, Tuple, Iterable, Optional
+from typing import List, Tuple, Iterable, Optional, Collection
 
 from .base import Backend, Message, TopicLock
 
@@ -118,7 +118,7 @@ class MySQLBackend(Backend):
         self.prefix = prefix
         self.queue_table = f"{self.prefix}_queue"
         self.lock_table = f"{self.prefix}_lock"
-        self.owner_id = random.randint(0, 2 ** 32 - 1)
+        self.owner_id = random.randint(0, 2**32 - 1)
 
     @property
     def max_payload_size(self) -> Optional[int]:
@@ -149,13 +149,13 @@ class MySQLBackend(Backend):
             self.connection.commit()
 
     def batch_put(
-            self,
-            data: Iterable[Tuple[bytes, int, Optional[bytes]]],
-            priority: int,
-            delay: int,
-            failure_base_delay: int,
-            visibility_timeout: int,
-    ) -> None:
+        self,
+        data: Collection[Tuple[bytes, int, Optional[bytes]]],
+        priority: int,
+        delay: int,
+        failure_base_delay: int,
+        visibility_timeout: int,
+    ) -> int:
         for payload, topic, hsh in data:
             if len(payload) > self.max_payload_size:
                 raise ValueError(
@@ -180,11 +180,19 @@ class MySQLBackend(Backend):
                 )
                 for payload, topic, hsh in data
             ]
-            cur.executemany(
-                SQL_INSERT.format(name=self.queue_table),
-                args=rows,
-            )
+            total = 0
+            for row in rows:
+                try:
+                    cur.execute(
+                        SQL_INSERT.format(name=self.queue_table),
+                        args=row,
+                    )
+                    total += cur.rowcount
+                except Exception as err:
+                    if err.__class__.__name__ != "IntegrityError":
+                        raise
             self.connection.commit()
+            return total
 
     def release_stalled_messages(self) -> int:
         with self.connection.cursor() as cur:
@@ -265,7 +273,7 @@ class MySQLBackend(Backend):
         return rows
 
     def acquire_topic(
-            self, topic_lock_visibility_timeout: int
+        self, topic_lock_visibility_timeout: int
     ) -> Optional["TopicLock"]:
         with self.connection.cursor() as cur:
             self.connection.begin()
@@ -279,7 +287,8 @@ class MySQLBackend(Backend):
                 try:
                     cur.execute(
                         f"INSERT INTO {self.lock_table} (topic, owner_id, visibility_timeout) VALUES (%s, %s, %s)",
-                        args=(topic, self.owner_id, topic_lock_visibility_timeout))
+                        args=(topic, self.owner_id, topic_lock_visibility_timeout),
+                    )
                 except Exception:  # XXX
                     continue
                 new_lock = topic
@@ -294,27 +303,35 @@ class MySQLBackend(Backend):
     def batch_release_topic(self, topics: Iterable[int]) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(f"""
+            cur.execute(
+                f"""
             DELETE FROM {self.lock_table} WHERE topic IN %s AND owner_id = %s
-            """, args=(topics, self.owner_id))
+            """,
+                args=(list(topics), self.owner_id),
+            )
             self.connection.commit()
 
     def batch_touch_topic(self, topics: Iterable[int]) -> None:
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(f"""
+            cur.execute(
+                f"""
             UPDATE {self.lock_table} SET acquire_time=CURRENT_TIMESTAMP
             WHERE topic IN %s AND owner_id = %s
-            """, args=(topics, self.owner_id))
+            """,
+                args=(list(topics), self.owner_id),
+            )
             self.connection.commit()
 
     def release_stalled_topic_locks(self) -> int:
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(f"""
+            cur.execute(
+                f"""
             DELETE FROM {self.lock_table} WHERE
             TIMESTAMPDIFF(SECOND, acquire_time, CURRENT_TIMESTAMP) > visibility_timeout
-            """)
+            """
+            )
             rows = cur.rowcount
             self.connection.commit()
             return rows

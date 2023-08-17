@@ -1,6 +1,6 @@
 import time
 from collections import Counter
-from typing import List, Tuple, Iterable, Optional
+from typing import List, Tuple, Iterable, Optional, Collection
 
 from .base import Backend, Message, TopicLock
 
@@ -37,12 +37,12 @@ class LocalBackend(Backend):
 
     def batch_put(
         self,
-        data: Iterable[Tuple[bytes, int, Optional[bytes]]],
+        data: Collection[Tuple[bytes, int, Optional[bytes]]],
         priority: int,
         delay: int,
         failure_base_delay: int,
         visibility_timeout: int,
-    ) -> None:
+    ) -> int:
         assert self.created
         for payload, topic, hsh in data:
             if hsh is not None and len(hsh) != self._hash_size:
@@ -50,12 +50,14 @@ class LocalBackend(Backend):
                     f"hsh size is not HASH_SIZE ({len(hsh)} != {self._hash_size})"
                 )
 
+        constraint_violations = []
+        for payload, topic, hsh in data:
             if hsh is not None:
                 if (topic, hsh) in self.unique_constraint:
-                    raise ValueError((topic, hsh))
+                    constraint_violations.append((payload, topic, hsh))
+                    continue
                 self.unique_constraint.add((topic, hsh))
 
-        for payload, topic, hsh in data:
             self.messages.append(
                 {
                     "id": self.next_id,
@@ -71,6 +73,8 @@ class LocalBackend(Backend):
                 }
             )
             self.next_id += 1
+
+        return len(data) - len(constraint_violations)
 
     def release_stalled_messages(self) -> int:
         assert self.created

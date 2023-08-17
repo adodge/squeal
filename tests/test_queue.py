@@ -102,15 +102,22 @@ class TestMySQLQueue:
     def test_hash_uniqueness(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)
-            q.put(b"", topic=1, priority=0, hsh=b"0000000000000000")
-            q.put(b"", topic=1, priority=100, hsh=b"0000000000000001")
-            with pytest.raises(Exception):
-                q.put(b"", topic=1, hsh=b"0000000000000001")
+            assert 1 == q.put(b"", topic=1, priority=0, hsh=b"0000000000000000")
+            assert 1 == q.put(b"", topic=1, priority=100, hsh=b"0000000000000001")
+            assert 0 == q.put(b"", topic=1, hsh=b"0000000000000001")
 
             x = q.get(topic=1)
             x.ack()
 
-            q.put(b"", topic=1, hsh=b"0000000000000001")
+            assert 1 == q.put(b"", topic=1, hsh=b"0000000000000001")
+
+    def test_batch_put_uniqueness_violation(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            q = Queue(bk)
+            assert 1 == q.batch_put([(b"b", 1, b"0000000000000000")], priority=0)
+            assert 0 == q.batch_put([(b"b", 1, b"0000000000000000")], priority=0)
 
     def test_batch_put(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:

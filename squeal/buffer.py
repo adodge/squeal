@@ -1,11 +1,11 @@
 import logging
-from typing import Optional, Dict, List
-
-from squeal import Queue, Message
+from typing import Optional, Dict, List, Coroutine, Any, Generator
+from squeal.queue import Queue
+from squeal.backend.base import Message
 
 
 class BufferMessage(Message):
-    FIELDS = Message.FIELDS + ['buffer']
+    FIELDS = Message.FIELDS + ["buffer"]
 
     def __init__(self, *args, buffer: "Buffer", **kwargs):
         super().__init__(*args, **kwargs)
@@ -13,10 +13,7 @@ class BufferMessage(Message):
 
     @classmethod
     def from_message(cls, msg: Message, *args, **kwargs) -> "BufferMessage":
-        kwargs.update({
-            k: getattr(msg, k)
-            for k in msg.FIELDS
-        })
+        kwargs.update({k: getattr(msg, k) for k in msg.FIELDS})
         return cls(*args, **kwargs)
 
     def ack(self):
@@ -57,7 +54,7 @@ class Buffer:
         quota = self.topic_quota[idx]
         if held >= quota:
             return
-        target = self.extra_buffer_multiplier*quota
+        target = self.extra_buffer_multiplier * quota
         msgs = self.queue.batch_get([(idx, target - held)])
         self.topic_buffer[idx].extend(msgs)
 
@@ -122,6 +119,7 @@ class Buffer:
         if self.closed:
             raise RuntimeError
         topic = self.message_topic[message_idx]
+
         self.topic_processing[topic] -= 1
 
     def nack(self, message_idx: int) -> None:
@@ -129,3 +127,10 @@ class Buffer:
             raise RuntimeError
         topic = self.message_topic[message_idx]
         self.topic_processing[topic] -= 1
+
+    def __iter__(self) -> Generator[BufferMessage, Any, None]:
+        while True:
+            msg = self.get()
+            if msg is None:
+                break
+            yield msg

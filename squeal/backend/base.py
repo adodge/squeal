@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import List, Tuple, Iterable, Optional
+from typing import List, Tuple, Iterable, Optional, Collection
 
 
 class Backend(ABC):
@@ -22,12 +22,12 @@ class Backend(ABC):
 
     def batch_put(
         self,
-        data: Iterable[Tuple[bytes, int, Optional[bytes]]],
+        data: Collection[Tuple[bytes, int, Optional[bytes]]],
         priority: int,
         delay: int,
         failure_base_delay: int,
         visibility_timeout: int,
-    ) -> None:
+    ) -> int:
         raise NotImplementedError
 
     def release_stalled_messages(self) -> int:
@@ -88,9 +88,11 @@ class TopicLock:
 
 
 class Message:
-    FIELDS = ['payload', 'idx', 'backend', 'status']
+    FIELDS = ["payload", "idx", "backend", "status"]
 
-    def __init__(self, payload: bytes, idx: int, backend: Backend, status: Optional[bool] = None):
+    def __init__(
+        self, payload: bytes, idx: int, backend: Backend, status: Optional[bool] = None
+    ):
         self.payload = payload
         self.idx = idx
         self.backend = backend

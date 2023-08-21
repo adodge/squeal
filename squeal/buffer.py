@@ -1,7 +1,10 @@
-import logging
-from typing import Optional, Dict, List, Coroutine, Any, Generator
-from squeal.queue import Queue
+from typing import Optional, Dict, List, Any, Generator
+
 from squeal.backend.base import Message
+from squeal.queue import Queue
+from squeal.utils import get_logger, lm
+
+logger = get_logger()
 
 
 class BufferMessage(Message):
@@ -26,12 +29,17 @@ class BufferMessage(Message):
 
 
 class Buffer:
-    def __init__(self, queue: Queue):
+    def __init__(
+        self,
+        queue: Queue,
+        extra_buffer_multiplier: int = 2,
+        default_topic_quota: int = 1,
+    ):
         self.queue = queue
 
         self.topic_buffer: Dict[int, List[Message]] = {}
-        self.extra_buffer_multiplier = 2
-        self.default_topic_quota: int = 1
+        self.extra_buffer_multiplier = extra_buffer_multiplier
+        self.default_topic_quota: int = default_topic_quota
         self.topic_quota: Dict[int, int] = {}
         self.topic_processing: Dict[int, int] = {}
         self.message_topic: Dict[int, int] = {}
@@ -39,6 +47,8 @@ class Buffer:
         self.closed = False
 
     def close(self):
+        if self.closed:
+            raise RuntimeError
         self.closed = True
         self.queue.release_topics()
         self.queue.nack_all()
@@ -54,25 +64,67 @@ class Buffer:
         quota = self.topic_quota[idx]
         processing = self.topic_processing[idx]
         if held - processing >= quota:
+            logger.debug(
+                lm(
+                    "Buffer._fill_buffer()",
+                    {
+                        "action": "none",
+                        "idx": idx,
+                        "n_held": held,
+                        "n_quota": quota,
+                        "n_processing": processing,
+                    },
+                )
+            )
             return
-        target = self.extra_buffer_multiplier * quota
-        msgs = self.queue.batch_get([(idx, target - held + processing)])
+        target = self.extra_buffer_multiplier * quota - held + processing
+        msgs = self.queue.batch_get([(idx, target)])
         self.topic_buffer[idx].extend(msgs)
+        logger.debug(
+            lm(
+                "Buffer._fill_buffer()",
+                {
+                    "action": "get",
+                    "idx": idx,
+                    "n_held": held,
+                    "n_quota": quota,
+                    "n_processing": processing,
+                    "target": target,
+                    "new_msgs": len(msgs),
+                },
+            )
+        )
 
     def _acquire_topic(self) -> bool:
         topic = self.queue.acquire_topic()
         if topic is None:
+            logger.debug(lm("Buffer._acquire_topic()", {"result": "failure"}))
             return False
         self.topic_quota[topic.idx] = self.default_topic_quota
         self.topic_processing[topic.idx] = 0
         self.topic_buffer[topic.idx] = []
+        logger.debug(
+            lm(
+                "Buffer._acquire_topic()",
+                {
+                    "result": "success",
+                    "topic_id": topic.idx,
+                },
+            )
+        )
         self._fill_buffer(topic.idx)
         return True
 
     def _drop_topic(self, topic: int):
         if self.topic_processing[topic] > 0:
-            logging.error("Can't release topic, as there are still pending tasks")
-            return
+            raise RuntimeError
+
+        logger.debug(
+            lm(
+                "Buffer._drop_topic()",
+                {"topic_id": topic, "buffer_size": len(self.topic_buffer[topic])},
+            )
+        )
 
         for msg in self.topic_buffer[topic]:
             msg.nack()
@@ -104,30 +156,73 @@ class Buffer:
         if self.closed:
             raise RuntimeError
         self._fill_buffers()
+        out = None
         for topic_lock in self.queue.list_held_topics():
             topic = topic_lock.idx
-            allowed = self.topic_quota[topic] - self.topic_processing[topic]
-            if allowed <= 0 or not self.topic_buffer[topic]:
+            q = self.topic_quota[topic]
+            p = self.topic_processing[topic]
+            b = len(self.topic_buffer[topic])
+            allowed = q - p
+            logger.debug(
+                lm(
+                    "Buffer.get() topic",
+                    {
+                        "topic_id": topic,
+                        "n_held": b,
+                        "n_quota": q,
+                        "n_processing": p,
+                    },
+                )
+            )
+            if allowed <= 0 or b == 0:
                 continue
 
             msg = self.topic_buffer[topic].pop(-1)
             self.message_topic[msg.idx] = topic
             self.topic_processing[topic] += 1
-            return BufferMessage.from_message(msg, buffer=self)
-        return None
+            out = BufferMessage.from_message(msg, buffer=self)
+            break
+        logger.debug(
+            lm(
+                "Buffer.get() result",
+                {
+                    "success": ("true" if out is not None else "false"),
+                },
+            )
+        )
+        return out
 
     def ack(self, message_idx: int) -> None:
         if self.closed:
             raise RuntimeError
         topic = self.message_topic[message_idx]
-
         self.topic_processing[topic] -= 1
+
+        logger.debug(
+            lm(
+                "Buffer.ack()",
+                {
+                    "topic_id": topic,
+                    "n_processing": self.topic_processing[topic],
+                },
+            )
+        )
 
     def nack(self, message_idx: int) -> None:
         if self.closed:
             raise RuntimeError
         topic = self.message_topic[message_idx]
         self.topic_processing[topic] -= 1
+
+        logger.debug(
+            lm(
+                "Buffer.nack()",
+                {
+                    "topic_id": topic,
+                    "n_processing": self.topic_processing[topic],
+                },
+            )
+        )
 
     def __iter__(self) -> Generator[BufferMessage, Any, None]:
         while True:

@@ -97,7 +97,9 @@ class TestMySQLQueue:
             z = q.get(topic=1)
             assert b"test_queue_nack" == z.payload
 
-    def test_queue_skip_nack_with_delay(self, backend_class: Type[TemporaryBackendMixin]):
+    def test_queue_skip_nack_with_delay(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
         with backend_class() as bk:
             q = Queue(bk, failure_base_delay=100)
             q.put(b"a", topic=1)

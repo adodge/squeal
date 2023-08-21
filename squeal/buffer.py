@@ -52,10 +52,11 @@ class Buffer:
     def _fill_buffer(self, idx: int) -> None:
         held = len(self.topic_buffer[idx])
         quota = self.topic_quota[idx]
-        if held >= quota:
+        processing = self.topic_processing[idx]
+        if held - processing >= quota:
             return
         target = self.extra_buffer_multiplier * quota
-        msgs = self.queue.batch_get([(idx, target - held)])
+        msgs = self.queue.batch_get([(idx, target - held + processing)])
         self.topic_buffer[idx].extend(msgs)
 
     def _acquire_topic(self) -> bool:

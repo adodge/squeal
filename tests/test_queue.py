@@ -91,13 +91,33 @@ class TestMySQLQueue:
             x = q.get(topic=1)
             assert b"test_queue_nack" == x.payload
 
-            time.sleep(2)
-
             assert q.get(topic=1) is None
 
             x.nack()
             z = q.get(topic=1)
             assert b"test_queue_nack" == z.payload
+
+    def test_queue_skip_nack_with_delay(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            q = Queue(bk, failure_base_delay=100)
+            q.put(b"a", topic=1)
+            q.put(b"b", topic=1)
+            q.put(b"c", topic=1)
+
+            x1 = q.get(topic=1)
+            assert b"a" == x1.payload
+            x1.nack()
+
+            x2 = q.get(topic=1)
+            assert b"b" == x2.payload
+            x2.nack()
+
+            x3 = q.get(topic=1)
+            assert b"c" == x3.payload
+            x3.nack()
+
+            x4 = q.get(topic=1)
+            assert x4 is None
 
     def test_hash_uniqueness(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:

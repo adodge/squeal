@@ -141,6 +141,15 @@ class TestMySQLQueue:
             assert 1 == q.batch_put([(b"b", 1, b"0000000000000000")], priority=0)
             assert 0 == q.batch_put([(b"b", 1, b"0000000000000000")], priority=0)
 
+    def test_put_with_rate_limit(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            q = Queue(bk, rate_limit_per_hour=1)
+            assert 1 == q.put(item=b"a", topic=1, hsh=b"0000000000000000")
+            assert 0 == q.put(item=b"a", topic=1, hsh=b"0000000000000000")
+            m = q.get(topic=1)
+            m.ack()
+            assert 0 == q.put(item=b"a", topic=1, hsh=b"0000000000000000")
+
     def test_batch_put(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             q = Queue(bk)

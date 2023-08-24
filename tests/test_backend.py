@@ -352,3 +352,32 @@ class TestBackend:
             msgs = bk.batch_get(1, 1)
             msgs = {m.idx: m for m in msgs}
             bk.batch_touch_topic(msgs.keys())
+
+    def test_rate_limiting(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            key = b"0" * bk.hash_size
+            for _ in range(10):
+                assert bk.rate_limit(key, max_events=10, interval_seconds=60)
+            for _ in range(10):
+                assert not bk.rate_limit(key, max_events=10, interval_seconds=60)
+
+    def test_rate_limiting_expires(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            key = b"0" * bk.hash_size
+            for _ in range(2):
+                assert bk.rate_limit(key, max_events=2, interval_seconds=1)
+            for _ in range(2):
+                assert not bk.rate_limit(key, max_events=2, interval_seconds=1)
+
+            time.sleep(2)
+
+            for _ in range(2):
+                assert bk.rate_limit(key, max_events=2, interval_seconds=1)
+            for _ in range(2):
+                assert not bk.rate_limit(key, max_events=2, interval_seconds=1)
+
+    def test_rate_limiting_bad_key(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            key = b"0" * bk.hash_size + b"0"
+            with pytest.raises(ValueError):
+                assert bk.rate_limit(key, max_events=10, interval_seconds=60)

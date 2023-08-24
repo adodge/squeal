@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import List, Tuple, Iterable, Optional, Collection
+from typing import List, Tuple, Optional, Collection
 
 
 class Backend(ABC):
@@ -63,6 +63,9 @@ class Backend(ABC):
         raise NotImplementedError
 
     def release_stalled_topic_locks(self) -> int:
+        raise NotImplementedError
+
+    def rate_limit(self, key: bytes, max_events: int, interval_seconds: int) -> bool:
         raise NotImplementedError
 
 

@@ -1,5 +1,5 @@
 import random
-from typing import List, Tuple, Iterable, Optional, Collection
+from typing import List, Tuple, Optional, Collection
 
 from .base import Backend, Message, TopicLock
 
@@ -32,6 +32,15 @@ CREATE TABLE IF NOT EXISTS {name} (
     visibility_timeout INT UNSIGNED NOT NULL,
     acquire_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (topic)
+)
+"""
+SQL_CREATE_RATE_LIMITS = """
+CREATE TABLE IF NOT EXISTS {name} (
+    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    hash BINARY({key_size}) NULL,
+    expire_time DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    INDEX (hash)
 )
 """
 
@@ -118,6 +127,7 @@ class MySQLBackend(Backend):
         self.prefix = prefix
         self.queue_table = f"{self.prefix}_queue"
         self.lock_table = f"{self.prefix}_lock"
+        self.rate_limit_table = f"{self.prefix}_limits"
         self.owner_id = random.randint(0, 2**32 - 1)
 
     @property
@@ -139,6 +149,11 @@ class MySQLBackend(Backend):
                 )
             )
             cur.execute(SQL_CREATE_LOCKS.format(name=self.lock_table))
+            cur.execute(
+                SQL_CREATE_RATE_LIMITS.format(
+                    name=self.rate_limit_table, key_size=self.hash_size
+                )
+            )
             self.connection.commit()
 
     def destroy(self) -> None:
@@ -146,6 +161,7 @@ class MySQLBackend(Backend):
             self.connection.begin()
             cur.execute(SQL_DROP.format(name=self.queue_table))
             cur.execute(SQL_DROP.format(name=self.lock_table))
+            cur.execute(SQL_DROP.format(name=self.rate_limit_table))
             self.connection.commit()
 
     def batch_put(
@@ -343,3 +359,30 @@ class MySQLBackend(Backend):
             rows = cur.rowcount
             self.connection.commit()
             return rows
+
+    def rate_limit(self, key: bytes, max_events: int, interval_seconds: int) -> bool:
+        if len(key) != self.hash_size:
+            raise ValueError(
+                f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
+            )
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(
+                f"DELETE FROM {self.rate_limit_table} "
+                f"WHERE expire_time < CURRENT_TIMESTAMP"
+            )
+            cur.execute(
+                f"SELECT COUNT(*) FROM {self.rate_limit_table} WHERE hash=%s",
+                args=(key,),
+            )
+            (n,) = cur.fetchone()
+            if n >= max_events:
+                self.connection.commit()
+                return False
+            cur.execute(
+                f"INSERT INTO {self.rate_limit_table} "
+                f"SET hash=%s, expire_time=TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)",
+                args=(key, interval_seconds),
+            )
+            self.connection.commit()
+            return True

@@ -15,6 +15,7 @@ class LocalBackend(Backend):
         super().__init__()
         self.messages = []
         self.topic_locks = {}
+        self.rate_limits = {}
         self.unique_constraint = set()
         self.next_id = 0
         self.created = False
@@ -45,9 +46,9 @@ class LocalBackend(Backend):
     ) -> int:
         assert self.created
         for payload, topic, hsh in data:
-            if hsh is not None and len(hsh) != self._hash_size:
+            if hsh is not None and len(hsh) != self.hash_size:
                 raise ValueError(
-                    f"hsh size is not HASH_SIZE ({len(hsh)} != {self._hash_size})"
+                    f"hsh size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
                 )
 
         constraint_violations = []
@@ -217,3 +218,21 @@ class LocalBackend(Backend):
         for topic in to_release:
             del self.topic_locks[topic]
         return len(to_release)
+
+    def rate_limit(self, key: bytes, max_events: int, interval_seconds: int) -> bool:
+        if len(key) != self.hash_size:
+            raise ValueError(
+                f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
+            )
+
+        if key not in self.rate_limits:
+            self.rate_limits[key] = []
+
+        now = time.time()
+        self.rate_limits[key] = [t for t in self.rate_limits[key] if t > now]
+
+        if len(self.rate_limits[key]) < max_events:
+            self.rate_limits[key].append(now + interval_seconds)
+            return True
+
+        return False

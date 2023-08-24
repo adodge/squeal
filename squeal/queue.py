@@ -1,3 +1,4 @@
+import math
 from typing import Tuple, List, Dict, Iterable, Optional, Collection
 from squeal.backend.base import Backend, Message, TopicLock
 
@@ -14,6 +15,7 @@ class Queue:
         failure_base_delay: int = 1,
         visibility_timeout: int = 60,
         topic_lock_visibility_timeout: int = 60 * 15,
+        rate_limit_per_hour: Optional[float] = None,
         auto_create: bool = True,
     ):
         self.backend = backend
@@ -21,6 +23,7 @@ class Queue:
         self.failure_base_delay = failure_base_delay
         self.visibility_timeout = visibility_timeout
         self.topic_lock_visibility_timeout = topic_lock_visibility_timeout
+        self.rate_limit_per_hour = rate_limit_per_hour
 
         self._held_messages: Dict[int, "Message"] = {}
         self._held_topics: Dict[int, "TopicLock"] = {}
@@ -41,6 +44,12 @@ class Queue:
     def destroy(self) -> None:
         self.backend.destroy()
 
+    @property
+    def _rate_limit_interval_seconds(self) -> Optional[int]:
+        if self.rate_limit_per_hour is None:
+            return None
+        return math.ceil(60 * 60 / self.rate_limit_per_hour)
+
     def put(
         self, item: bytes, topic: int, hsh: Optional[bytes] = None, priority: int = 0
     ) -> int:
@@ -49,6 +58,16 @@ class Queue:
     def batch_put(
         self, items: Collection[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
     ) -> int:
+        interval = self._rate_limit_interval_seconds
+        if interval is not None:
+            approved_items = []
+            for item, topic, hsh in items:
+                if hsh is None or self.backend.rate_limit(
+                    hsh, max_events=1, interval_seconds=interval
+                ):
+                    approved_items.append((item, topic, hsh))
+            items = approved_items
+
         return self.backend.batch_put(
             items,
             priority,

@@ -12,7 +12,7 @@ def enable_structured_logging():
 
 
 def set_log_level(level: Union[int, str]):
-    logging.getLogger("squeal").setLevel(level)
+    get_logger().setLevel(level)
 
 
 def get_logger():

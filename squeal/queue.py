@@ -9,14 +9,14 @@ class Queue:
     """
 
     def __init__(
-            self,
-            backend: Backend,
-            new_message_delay: int = 0,
-            failure_base_delay: int = 1,
-            visibility_timeout: int = 60,
-            topic_lock_visibility_timeout: int = 60 * 15,
-            rate_limit_per_hour: Optional[float] = None,
-            auto_create: bool = True,
+        self,
+        backend: Backend,
+        new_message_delay: int = 0,
+        failure_base_delay: int = 1,
+        visibility_timeout: int = 60,
+        topic_lock_visibility_timeout: int = 60 * 15,
+        rate_limit_per_hour: Optional[float] = None,
+        auto_create: bool = True,
     ):
         self.backend = backend
         self.new_message_delay = new_message_delay
@@ -51,19 +51,19 @@ class Queue:
         return math.ceil(60 * 60 / self.rate_limit_per_hour)
 
     def put(
-            self, item: bytes, topic: int, hsh: Optional[bytes] = None, priority: int = 0
+        self, item: bytes, topic: int, hsh: Optional[bytes] = None, priority: int = 0
     ) -> int:
         return self.batch_put(items=[(item, topic, hsh)], priority=priority)
 
     def batch_put(
-            self, items: Collection[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
+        self, items: Collection[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
     ) -> int:
         interval = self._rate_limit_interval_seconds
         if interval is not None:
             approved_items = []
             for item, topic, hsh in items:
                 if hsh is None or self.backend.rate_limit(
-                        hsh, interval_seconds=interval
+                    hsh, interval_seconds=interval
                 ):
                     approved_items.append((item, topic, hsh))
             items = approved_items
@@ -99,12 +99,15 @@ class Queue:
     def touch_all(self) -> None:
         # XXX
         self._prune_held_messages()
-        self.backend.batch_touch(self._held_messages.keys())
+        self.backend.batch_touch(self._held_messages.keys(), self.visibility_timeout)
 
     def nack_all(self) -> None:
         # XXX
         self._prune_held_messages()
         self.backend.batch_nack(self._held_messages.keys())
+        for msg in self._held_messages.values():
+            if msg.status is None:
+                msg.status = False
         self._held_messages.clear()
 
     def list_topics(self) -> List[Tuple[int, int]]:
@@ -144,7 +147,8 @@ class Queue:
         self._prune_held_topics()
         self.backend.batch_touch_topic(
             self._held_topics.keys(),
-            topic_lock_visibility_timeout=self.topic_lock_visibility_timeout)
+            topic_lock_visibility_timeout=self.topic_lock_visibility_timeout,
+        )
 
     def list_held_topics(self) -> List["TopicLock"]:
         self._prune_held_topics()

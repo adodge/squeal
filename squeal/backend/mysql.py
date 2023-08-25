@@ -81,9 +81,11 @@ SELECT id, owner_id, payload FROM {name}
     ORDER BY priority DESC, id ASC
     LIMIT %s FOR UPDATE SKIP LOCKED;
 """
-SQL_BATCH_UPDATE = "UPDATE {name} " \
-                   "SET owner_id=%s, expire_time=TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP) " \
-                   "WHERE id IN %s"
+SQL_BATCH_UPDATE = (
+    "UPDATE {name} "
+    "SET owner_id=%s, expire_time=TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP) "
+    "WHERE id IN %s"
+)
 
 # Finish a message
 SQL_ACK = "DELETE FROM {name} WHERE id=%s"
@@ -190,7 +192,9 @@ class MySQLBackend(Backend):
             self.connection.commit()
             return total
 
-    def batch_get(self, topic: int, size: int, visibility_timeout: int) -> List["Message"]:
+    def batch_get(
+        self, topic: int, size: int, visibility_timeout: int
+    ) -> List["Message"]:
         with self.connection.cursor() as cur:
             self.connection.begin()
 
@@ -268,7 +272,9 @@ class MySQLBackend(Backend):
             self.connection.commit()
         return rows
 
-    def acquire_topic(self, topic_lock_visibility_timeout: int) -> Optional["TopicLock"]:
+    def acquire_topic(
+        self, topic_lock_visibility_timeout: int
+    ) -> Optional["TopicLock"]:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(SQL_LIST_TOPICS.format(name=self.queue_table))
@@ -311,7 +317,9 @@ class MySQLBackend(Backend):
             )
             self.connection.commit()
 
-    def batch_touch_topic(self, topics: Collection[int], topic_lock_visibility_timeout: int) -> None:
+    def batch_touch_topic(
+        self, topics: Collection[int], topic_lock_visibility_timeout: int
+    ) -> None:
         if len(topics) == 0:
             return
         with self.connection.cursor() as cur:

@@ -97,6 +97,28 @@ class TestMySQLQueue:
             z = q.get(topic=1)
             assert b"test_queue_nack" == z.payload
 
+    def test_queue_touch_all(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            q = Queue(bk, failure_base_delay=100, visibility_timeout=100)
+            q.batch_put([(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)])
+
+            q.batch_get([(1, 3)])
+
+            q.touch_all()
+
+    def test_queue_nack_all(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            q = Queue(bk, failure_base_delay=100, visibility_timeout=100)
+            q.batch_put([(b"a", 1, None), (b"b", 1, None), (b"c", 1, None)])
+
+            msgs = q.batch_get([(1, 3)])
+
+            q.nack_all()
+
+            for msg in msgs:
+                assert msg.released
+                assert not msg.status
+
     def test_queue_skip_nack_with_delay(
         self, backend_class: Type[TemporaryBackendMixin]
     ):

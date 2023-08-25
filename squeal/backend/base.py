@@ -32,7 +32,9 @@ class Backend(ABC):
     def ack(self, task_id: int) -> None:
         raise NotImplementedError
 
-    def batch_get(self, topic: int, size: int, visibility_timeout: int) -> List["Message"]:
+    def batch_get(
+        self, topic: int, size: int, visibility_timeout: int
+    ) -> List["Message"]:
         raise NotImplementedError
 
     def batch_nack(self, task_ids: Collection[int]) -> None:
@@ -55,7 +57,9 @@ class Backend(ABC):
     def batch_release_topic(self, topics: Collection[int]) -> None:
         raise NotImplementedError
 
-    def batch_touch_topic(self, topics: Collection[int], topic_lock_visibility_timeout: int) -> None:
+    def batch_touch_topic(
+        self, topics: Collection[int], topic_lock_visibility_timeout: int
+    ) -> None:
         raise NotImplementedError
 
     def rate_limit(self, key: bytes, interval_seconds: int) -> bool:

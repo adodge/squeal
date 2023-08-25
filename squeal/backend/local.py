@@ -37,11 +37,11 @@ class LocalBackend(Backend):
         self.created = False
 
     def batch_put(
-            self,
-            data: Collection[Tuple[bytes, int, Optional[bytes]]],
-            priority: int,
-            delay: int,
-            failure_base_delay: int,
+        self,
+        data: Collection[Tuple[bytes, int, Optional[bytes]]],
+        priority: int,
+        delay: int,
+        failure_base_delay: int,
     ) -> int:
         assert self.created
         for payload, topic, hsh in data:
@@ -75,7 +75,9 @@ class LocalBackend(Backend):
 
         return len(data) - len(constraint_violations)
 
-    def batch_get(self, topic: int, size: int, visibility_timeout: int) -> List["Message"]:
+    def batch_get(
+        self, topic: int, size: int, visibility_timeout: int
+    ) -> List["Message"]:
         assert self.created
         now = time.time()
         self.messages.sort(key=lambda x: [-x["priority"], x["id"]])
@@ -167,12 +169,12 @@ class LocalBackend(Backend):
         return n
 
     def acquire_topic(
-            self, topic_lock_visibility_timeout: int
+        self, topic_lock_visibility_timeout: int
     ) -> Optional["TopicLock"]:
         assert self.created
         for topic, size in self.list_topics():
             if topic not in self.topic_locks or self.topic_locks[topic] < time.time():
-                self.topic_locks[topic] = time.time()+topic_lock_visibility_timeout
+                self.topic_locks[topic] = time.time() + topic_lock_visibility_timeout
                 return TopicLock(topic, self, topic_lock_visibility_timeout)
         return None
 
@@ -182,8 +184,9 @@ class LocalBackend(Backend):
             if topic in self.topic_locks:
                 del self.topic_locks[topic]
 
-    def batch_touch_topic(self, topics: Collection[int],
-                          topic_lock_visibility_timeout: int) -> None:
+    def batch_touch_topic(
+        self, topics: Collection[int], topic_lock_visibility_timeout: int
+    ) -> None:
         assert self.created
         for topic in topics:
             if topic not in self.topic_locks:

@@ -22,16 +22,14 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
 
-            x = bk.batch_get(topic=1, size=1)[0]
+            x = bk.batch_get(topic=1, size=1, visibility_timeout=0)[0]
             assert b"test_release_stalled" == x.payload
 
             time.sleep(1)
-            assert 1 == bk.release_stalled_messages()
 
-            y = bk.batch_get(topic=1, size=1)[0]
+            y = bk.batch_get(topic=1, size=1, visibility_timeout=0)[0]
             assert b"test_release_stalled" == y.payload
 
     def test_ack(self, backend_class: Type[TemporaryBackendMixin]):
@@ -41,17 +39,15 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
 
-            x = bk.batch_get(topic=1, size=1)[0]
+            x = bk.batch_get(topic=1, size=1, visibility_timeout=0)[0]
             assert b"test_ack" == x.payload
             x.ack()
 
             time.sleep(1)
-            bk.release_stalled_messages()
 
-            assert 0 == len(bk.batch_get(topic=1, size=1))
+            assert 0 == len(bk.batch_get(topic=1, size=1, visibility_timeout=0))
 
     def test_nack(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
@@ -60,17 +56,16 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
 
-            x = bk.batch_get(topic=1, size=1)[0]
+            x = bk.batch_get(topic=1, size=1, visibility_timeout=10)[0]
             assert b"test_ack" == x.payload
 
-            assert 0 == len(bk.batch_get(topic=1, size=1))
+            assert 0 == len(bk.batch_get(topic=1, size=1, visibility_timeout=10))
 
             x.nack()
 
-            z = bk.batch_get(topic=1, size=1)[0]
+            z = bk.batch_get(topic=1, size=1, visibility_timeout=0)[0]
             assert z is not None
 
     def test_message_context_manager(self, backend_class: Type[TemporaryBackendMixin]):
@@ -80,17 +75,16 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
 
-            with bk.batch_get(topic=1, size=1)[0] as task:
+            with bk.batch_get(topic=1, size=1, visibility_timeout=0)[0] as task:
                 assert task is not None
                 pass
 
-            assert not task.status
-            time.sleep(1)
+            assert task.status == False
+            time.sleep(2)
 
-            with bk.batch_get(topic=1, size=1)[0] as task:
+            with bk.batch_get(topic=1, size=1, visibility_timeout=0)[0] as task:
                 assert task is not None
                 task.ack()
                 pass
@@ -98,7 +92,7 @@ class TestBackend:
             assert task.status
             time.sleep(1)
 
-            assert 0 == len(bk.batch_get(topic=1, size=1))
+            assert 0 == len(bk.batch_get(topic=1, size=1, visibility_timeout=0))
 
     def test_priority(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
@@ -107,22 +101,20 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             bk.batch_put(
                 [(b"b", 1, None)],
                 priority=1,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
 
-            msg = bk.batch_get(topic=1, size=1)[0]
+            msg = bk.batch_get(topic=1, size=1, visibility_timeout=0)[0]
             assert b"b" == msg.payload
 
     def test_batch_get_empty(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
-            msgs = bk.batch_get(topic=1, size=2)
+            msgs = bk.batch_get(topic=1, size=2, visibility_timeout=0)
             assert 0 == len(msgs)
 
     def test_batch_get_less_than_full(self, backend_class: Type[TemporaryBackendMixin]):
@@ -132,9 +124,8 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
-            msgs = bk.batch_get(topic=1, size=2)
+            msgs = bk.batch_get(topic=1, size=2, visibility_timeout=0)
             assert 1 == len(msgs)
             assert 0 == bk.get_topic_size(topic=1)
 
@@ -145,9 +136,8 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
-            msgs = bk.batch_get(topic=1, size=2)
+            msgs = bk.batch_get(topic=1, size=2, visibility_timeout=0)
             assert 2 == len(msgs)
             assert 0 == bk.get_topic_size(topic=1)
 
@@ -158,9 +148,8 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
-            msgs = bk.batch_get(topic=1, size=2)
+            msgs = bk.batch_get(topic=1, size=2, visibility_timeout=0)
             assert 2 == len(msgs)
             assert 1 == bk.get_topic_size(topic=1)
 
@@ -171,10 +160,9 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             assert 3 == bk.get_topic_size(topic=1)
-            msgs = bk.batch_get(topic=1, size=3)
+            msgs = bk.batch_get(topic=1, size=3, visibility_timeout=0)
             assert 3 == len(msgs)
             assert 0 == bk.get_topic_size(topic=1)
 
@@ -189,7 +177,6 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             assert bk.get_topic_size(1) == 3
 
@@ -202,10 +189,9 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             assert bk.get_topic_size(1) == 1
-            msg = bk.batch_get(1, 1)[0]
+            msg = bk.batch_get(1, 1, visibility_timeout=0)[0]
             msg.ack()
 
             assert bk.get_topic_size(1) == 0
@@ -215,7 +201,6 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             assert bk.get_topic_size(1) == 1
 
@@ -230,7 +215,6 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             assert n_rows == 2
             assert bk.get_topic_size(1) == 2
@@ -242,7 +226,6 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
 
             a = bk.acquire_topic(600)
@@ -260,26 +243,22 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
 
             a = bk.acquire_topic(1)
             assert a.idx == 1
-
-            assert 0 == bk.release_stalled_topic_locks()
 
             b = bk.acquire_topic(1)
             assert b is None
 
             time.sleep(2)
 
-            assert 1 == bk.release_stalled_topic_locks()
             c = bk.acquire_topic(1)
             assert c.idx == 1
 
     def test_touching_no_messages(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
-            bk.batch_touch([])
+            bk.batch_touch([], visibility_timeout=0)
 
     def test_nacking_no_messages(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
@@ -291,7 +270,7 @@ class TestBackend:
 
     def test_touching_no_topics(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
-            bk.batch_touch_topic([])
+            bk.batch_touch_topic([], topic_lock_visibility_timeout=10)
 
     def test_touching_non_list_collection(
         self, backend_class: Type[TemporaryBackendMixin]
@@ -302,11 +281,10 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
-            msgs = bk.batch_get(1, 1)
+            msgs = bk.batch_get(1, 1, visibility_timeout=0)
             msgs = {m.idx: m for m in msgs}
-            bk.batch_touch(msgs.keys())
+            bk.batch_touch(msgs.keys(), visibility_timeout=0)
 
     def test_nacking_non_list_collection(
         self, backend_class: Type[TemporaryBackendMixin]
@@ -317,9 +295,8 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
-            msgs = bk.batch_get(1, 1)
+            msgs = bk.batch_get(1, 1, visibility_timeout=0)
             msgs = {m.idx: m for m in msgs}
             bk.batch_nack(msgs.keys())
 
@@ -332,9 +309,8 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
-            msgs = bk.batch_get(1, 1)
+            msgs = bk.batch_get(1, 1, visibility_timeout=0)
             msgs = {m.idx: m for m in msgs}
             bk.batch_release_topic(msgs.keys())
 
@@ -347,37 +323,30 @@ class TestBackend:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
-            msgs = bk.batch_get(1, 1)
+            msgs = bk.batch_get(1, 1, visibility_timeout=0)
             msgs = {m.idx: m for m in msgs}
-            bk.batch_touch_topic(msgs.keys())
+            bk.batch_touch_topic(msgs.keys(), topic_lock_visibility_timeout=10)
 
     def test_rate_limiting(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             key = b"0" * bk.hash_size
-            for _ in range(10):
-                assert bk.rate_limit(key, max_events=10, interval_seconds=60)
-            for _ in range(10):
-                assert not bk.rate_limit(key, max_events=10, interval_seconds=60)
+            assert bk.rate_limit(key, interval_seconds=60)
+            assert not bk.rate_limit(key, interval_seconds=60)
 
     def test_rate_limiting_expires(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             key = b"0" * bk.hash_size
-            for _ in range(2):
-                assert bk.rate_limit(key, max_events=2, interval_seconds=1)
-            for _ in range(2):
-                assert not bk.rate_limit(key, max_events=2, interval_seconds=1)
+            assert bk.rate_limit(key, interval_seconds=1)
+            assert not bk.rate_limit(key, interval_seconds=1)
 
             time.sleep(2)
 
-            for _ in range(2):
-                assert bk.rate_limit(key, max_events=2, interval_seconds=1)
-            for _ in range(2):
-                assert not bk.rate_limit(key, max_events=2, interval_seconds=1)
+            assert bk.rate_limit(key, interval_seconds=1)
+            assert not bk.rate_limit(key, interval_seconds=1)
 
     def test_rate_limiting_bad_key(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             key = b"0" * bk.hash_size + b"0"
             with pytest.raises(ValueError):
-                assert bk.rate_limit(key, max_events=10, interval_seconds=60)
+                assert bk.rate_limit(key, interval_seconds=60)

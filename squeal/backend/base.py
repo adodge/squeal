@@ -26,23 +26,19 @@ class Backend(ABC):
         priority: int,
         delay: int,
         failure_base_delay: int,
-        visibility_timeout: int,
     ) -> int:
-        raise NotImplementedError
-
-    def release_stalled_messages(self) -> int:
         raise NotImplementedError
 
     def ack(self, task_id: int) -> None:
         raise NotImplementedError
 
-    def batch_get(self, topic: int, size: int) -> List["Message"]:
+    def batch_get(self, topic: int, size: int, visibility_timeout: int) -> List["Message"]:
         raise NotImplementedError
 
     def batch_nack(self, task_ids: Collection[int]) -> None:
         raise NotImplementedError
 
-    def batch_touch(self, task_ids: Collection[int]) -> None:
+    def batch_touch(self, task_ids: Collection[int], visibility_timeout: int) -> None:
         raise NotImplementedError
 
     def list_topics(self) -> List[Tuple[int, int]]:
@@ -59,20 +55,21 @@ class Backend(ABC):
     def batch_release_topic(self, topics: Collection[int]) -> None:
         raise NotImplementedError
 
-    def batch_touch_topic(self, topics: Collection[int]) -> None:
+    def batch_touch_topic(self, topics: Collection[int], topic_lock_visibility_timeout: int) -> None:
         raise NotImplementedError
 
-    def release_stalled_topic_locks(self) -> int:
+    def rate_limit(self, key: bytes, interval_seconds: int) -> bool:
         raise NotImplementedError
 
-    def rate_limit(self, key: bytes, max_events: int, interval_seconds: int) -> bool:
+    def rate_limit_forced(self, key: bytes, interval_seconds: int) -> None:
         raise NotImplementedError
 
 
 class TopicLock:
-    def __init__(self, idx: int, backend: Backend):
+    def __init__(self, idx: int, backend: Backend, visibility_timeout: int):
         self.idx = idx
         self.backend = backend
+        self.visibility_timeout = visibility_timeout
         self.released = False
 
     def __str__(self):
@@ -87,7 +84,7 @@ class TopicLock:
     def touch(self):
         if self.released:
             raise RuntimeError("Lock has already been released")
-        self.backend.batch_touch_topic([self.idx])
+        self.backend.batch_touch_topic([self.idx], self.visibility_timeout)
 
 
 class Message:

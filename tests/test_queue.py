@@ -101,7 +101,7 @@ class TestMySQLQueue:
         self, backend_class: Type[TemporaryBackendMixin]
     ):
         with backend_class() as bk:
-            q = Queue(bk, failure_base_delay=100)
+            q = Queue(bk, failure_base_delay=100, visibility_timeout=100)
             q.put(b"a", topic=1)
             q.put(b"b", topic=1)
             q.put(b"c", topic=1)

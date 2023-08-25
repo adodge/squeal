@@ -4,3 +4,4 @@ petname
 pytest
 black
 coverage
+build

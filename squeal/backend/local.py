@@ -37,12 +37,11 @@ class LocalBackend(Backend):
         self.created = False
 
     def batch_put(
-        self,
-        data: Collection[Tuple[bytes, int, Optional[bytes]]],
-        priority: int,
-        delay: int,
-        failure_base_delay: int,
-        visibility_timeout: int,
+            self,
+            data: Collection[Tuple[bytes, int, Optional[bytes]]],
+            priority: int,
+            delay: int,
+            failure_base_delay: int,
     ) -> int:
         assert self.created
         for payload, topic, hsh in data:
@@ -67,7 +66,6 @@ class LocalBackend(Backend):
                     "hsh": hsh,
                     "priority": priority,
                     "acquired": False,
-                    "visibility_timeout": visibility_timeout,
                     "delivery_time": time.time() + delay,
                     "failure_base_delay": failure_base_delay,
                     "failure_count": 0,
@@ -77,21 +75,7 @@ class LocalBackend(Backend):
 
         return len(data) - len(constraint_violations)
 
-    def release_stalled_messages(self) -> int:
-        assert self.created
-        now = time.time()
-        n = 0
-        for msg in self.messages:
-            if not msg["acquired"]:
-                continue
-            if msg["visibility_timeout"] + msg["acquire_time"] > now:
-                continue
-
-            msg["acquired"] = False
-            n += 1
-        return n
-
-    def batch_get(self, topic: int, size: int) -> List["Message"]:
+    def batch_get(self, topic: int, size: int, visibility_timeout: int) -> List["Message"]:
         assert self.created
         now = time.time()
         self.messages.sort(key=lambda x: [-x["priority"], x["id"]])
@@ -100,7 +84,7 @@ class LocalBackend(Backend):
         for msg in self.messages:
             if len(output) >= size:
                 break
-            if msg["acquired"]:
+            if msg["acquired"] and msg["expire_time"] > now:
                 continue
             if msg["topic"] != topic:
                 continue
@@ -108,7 +92,7 @@ class LocalBackend(Backend):
                 continue
 
             msg["acquired"] = True
-            msg["acquire_time"] = now
+            msg["expire_time"] = now + visibility_timeout
             output.append(Message(msg["payload"], msg["id"], self))
         return output
 
@@ -142,7 +126,7 @@ class LocalBackend(Backend):
             msg["delivery_time"] = time.time() + delay
             print(delay)
 
-    def batch_touch(self, task_ids: Collection[int]) -> None:
+    def batch_touch(self, task_ids: Collection[int], visibility_timeout: int) -> None:
         assert self.created
         to_touch = set(task_ids)
         for msg in self.messages:
@@ -150,7 +134,7 @@ class LocalBackend(Backend):
                 continue
             if not msg["acquired"]:
                 continue
-            msg["acquire_time"] = time.time()
+            msg["expire_time"] = time.time() + visibility_timeout
 
     def list_topics(self) -> List[Tuple[int, int]]:
         assert self.created
@@ -183,16 +167,13 @@ class LocalBackend(Backend):
         return n
 
     def acquire_topic(
-        self, topic_lock_visibility_timeout: int
+            self, topic_lock_visibility_timeout: int
     ) -> Optional["TopicLock"]:
         assert self.created
         for topic, size in self.list_topics():
-            if topic not in self.topic_locks:
-                self.topic_locks[topic] = {
-                    "acquire_time": time.time(),
-                    "visibility_timeout": topic_lock_visibility_timeout,
-                }
-                return TopicLock(topic, self)
+            if topic not in self.topic_locks or self.topic_locks[topic] < time.time():
+                self.topic_locks[topic] = time.time()+topic_lock_visibility_timeout
+                return TopicLock(topic, self, topic_lock_visibility_timeout)
         return None
 
     def batch_release_topic(self, topics: Collection[int]) -> None:
@@ -201,38 +182,30 @@ class LocalBackend(Backend):
             if topic in self.topic_locks:
                 del self.topic_locks[topic]
 
-    def batch_touch_topic(self, topics: Collection[int]) -> None:
+    def batch_touch_topic(self, topics: Collection[int],
+                          topic_lock_visibility_timeout: int) -> None:
         assert self.created
         for topic in topics:
             if topic not in self.topic_locks:
                 continue
-            self.topic_locks[topic]["acquire_time"] = time.time()
+            self.topic_locks[topic] = time.time() + topic_lock_visibility_timeout
 
-    def release_stalled_topic_locks(self) -> int:
-        assert self.created
-        to_release = [
-            topic
-            for topic, meta in self.topic_locks.items()
-            if meta["acquire_time"] + meta["visibility_timeout"] < time.time()
-        ]
-        for topic in to_release:
-            del self.topic_locks[topic]
-        return len(to_release)
-
-    def rate_limit(self, key: bytes, max_events: int, interval_seconds: int) -> bool:
+    def rate_limit(self, key: bytes, interval_seconds: int) -> bool:
         if len(key) != self.hash_size:
             raise ValueError(
                 f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
             )
 
-        if key not in self.rate_limits:
-            self.rate_limits[key] = []
-
         now = time.time()
-        self.rate_limits[key] = [t for t in self.rate_limits[key] if t > now]
-
-        if len(self.rate_limits[key]) < max_events:
-            self.rate_limits[key].append(now + interval_seconds)
+        if key not in self.rate_limits or self.rate_limits[key] <= now:
+            self.rate_limits[key] = now + interval_seconds
             return True
-
         return False
+
+    def rate_limit_forced(self, key: bytes, interval_seconds: int) -> None:
+        if len(key) != self.hash_size:
+            raise ValueError(
+                f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
+            )
+
+        self.rate_limits[key] = time.time() + interval_seconds

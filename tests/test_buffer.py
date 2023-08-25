@@ -18,7 +18,6 @@ class TestBuffer:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             buf = Buffer(Queue(bk))
 
@@ -46,7 +45,6 @@ class TestBuffer:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             buf = Buffer(Queue(bk))
 
@@ -67,7 +65,6 @@ class TestBuffer:
                 priority=0,
                 delay=0,
                 failure_base_delay=0,
-                visibility_timeout=0,
             )
             buf = Buffer(Queue(bk))
 

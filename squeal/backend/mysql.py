@@ -15,32 +15,30 @@ CREATE TABLE IF NOT EXISTS {name} (
     hash BINARY({hash_size}) NULL,
     priority INT UNSIGNED NOT NULL,
     owner_id INT UNSIGNED NULL,
-    delivery_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    visibility_timeout INT UNSIGNED NOT NULL,
+    delivery_time TIMESTAMP NOT NULL,
     failure_base_delay INT UNSIGNED NOT NULL,
     failure_count INT UNSIGNED DEFAULT 0,
-    acquire_time DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+    expire_time TIMESTAMP NULL,
     payload VARBINARY({size}),
     PRIMARY KEY (id),
-    UNIQUE (topic, hash)
+    UNIQUE (topic, hash),
+    INDEX (topic, delivery_time)
 )
 """
 SQL_CREATE_LOCKS = """
 CREATE TABLE IF NOT EXISTS {name} (
-    topic INT UNSIGNED NOT NULL,
+    topic INT UNSIGNED NOT NULL PRIMARY KEY,
     owner_id INT UNSIGNED NOT NULL,
-    visibility_timeout INT UNSIGNED NOT NULL,
-    acquire_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (topic)
+    expire_time TIMESTAMP NOT NULL,
+    INDEX (expire_time),
+    INDEX (owner_id)
 )
 """
 SQL_CREATE_RATE_LIMITS = """
 CREATE TABLE IF NOT EXISTS {name} (
-    id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    hash BINARY({key_size}) NULL,
-    expire_time DATETIME NOT NULL,
-    PRIMARY KEY (id),
-    INDEX (hash)
+    hash BINARY({key_size}) NOT NULL PRIMARY KEY,
+    expire_time TIMESTAMP NOT NULL,
+    INDEX (expire_time)
 )
 """
 
@@ -59,20 +57,10 @@ SQL_DROP = "DROP TABLE IF EXISTS {name}"
 # * priority
 # * delay (seconds)
 # * failure_base_delay (seconds)
-# * visibility timeout (seconds)
 SQL_INSERT = (
-    "INSERT INTO {name} (payload, topic, hash, priority, delivery_time, failure_base_delay, visibility_timeout)"
-    "VALUES (%s, %s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP), %s, %s)"
+    "INSERT INTO {name} (payload, topic, hash, priority, delivery_time, failure_base_delay)"
+    "VALUES (%s, %s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP), %s)"
 )
-
-# Release stalled messages
-# format args:
-#   name -> table name
-SQL_UPDATE = """
-UPDATE {name} SET owner_id=NULL
-    WHERE owner_id IS NOT NULL
-    AND TIMESTAMPDIFF(SECOND, acquire_time, CURRENT_TIMESTAMP) > visibility_timeout
-"""
 
 # Can't guarantee that columns are updated in a particular
 # order in one update statement, so we do this in two steps.
@@ -83,25 +71,19 @@ UPDATE {name}
 """
 SQL_BATCH_NACK_2 = """
 UPDATE {name}
-   SET owner_id=NULL,
-       failure_count = failure_count + 1
-   WHERE owner_id=%s AND id IN %s
-"""
-
-# Refresh the acquire time for a bunch of messages
-SQL_BATCH_TOUCH = """
-UPDATE {name}
-   SET acquire_time = CURRENT_TIMESTAMP
+   SET owner_id=NULL, failure_count = failure_count + 1
    WHERE owner_id=%s AND id IN %s
 """
 
 SQL_BATCH_SELECT = """
 SELECT id, owner_id, payload FROM {name}
-    WHERE owner_id IS NULL AND topic=%s AND TIMESTAMPDIFF(SECOND, delivery_time, CURRENT_TIMESTAMP) >= 0
+    WHERE (owner_id IS NULL OR expire_time < CURRENT_TIMESTAMP) AND topic=%s AND CURRENT_TIMESTAMP >= delivery_time
     ORDER BY priority DESC, id ASC
     LIMIT %s FOR UPDATE SKIP LOCKED;
 """
-SQL_BATCH_UPDATE = "UPDATE {name} SET owner_id=%s WHERE id IN %s"
+SQL_BATCH_UPDATE = "UPDATE {name} " \
+                   "SET owner_id=%s, expire_time=TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP) " \
+                   "WHERE id IN %s"
 
 # Finish a message
 SQL_ACK = "DELETE FROM {name} WHERE id=%s"
@@ -170,7 +152,6 @@ class MySQLBackend(Backend):
         priority: int,
         delay: int,
         failure_base_delay: int,
-        visibility_timeout: int,
     ) -> int:
         for payload, topic, hsh in data:
             if len(payload) > self.max_payload_size:
@@ -192,7 +173,6 @@ class MySQLBackend(Backend):
                     priority,
                     delay,
                     failure_base_delay,
-                    visibility_timeout,
                 )
                 for payload, topic, hsh in data
             ]
@@ -210,15 +190,7 @@ class MySQLBackend(Backend):
             self.connection.commit()
             return total
 
-    def release_stalled_messages(self) -> int:
-        with self.connection.cursor() as cur:
-            self.connection.begin()
-            cur.execute(SQL_UPDATE.format(name=self.queue_table))
-            rows = cur.rowcount
-            self.connection.commit()
-            return rows
-
-    def batch_get(self, topic: int, size: int) -> List["Message"]:
+    def batch_get(self, topic: int, size: int, visibility_timeout: int) -> List["Message"]:
         with self.connection.cursor() as cur:
             self.connection.begin()
 
@@ -234,7 +206,7 @@ class MySQLBackend(Backend):
             idxes = [x[0] for x in rows]
             cur.execute(
                 SQL_BATCH_UPDATE.format(name=self.queue_table),
-                args=(self.owner_id, idxes),
+                args=(self.owner_id, visibility_timeout, idxes),
             )
 
             self.connection.commit()
@@ -264,14 +236,18 @@ class MySQLBackend(Backend):
             # TODO raise if it's already expired
             self.connection.commit()
 
-    def batch_touch(self, task_ids: Collection[int]) -> None:
+    def batch_touch(self, task_ids: Collection[int], visibility_timeout: int) -> None:
         if len(task_ids) == 0:
             return
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
-                SQL_BATCH_TOUCH.format(name=self.queue_table),
-                args=(self.owner_id, list(task_ids)),
+                f"""
+                UPDATE {self.queue_table}
+                   SET expire_time = TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)
+                   WHERE owner_id=%s AND id IN %s
+                """,
+                args=(visibility_timeout, self.owner_id, list(task_ids)),
             )
             # TODO raise if it's already expired
             self.connection.commit()
@@ -292,32 +268,34 @@ class MySQLBackend(Backend):
             self.connection.commit()
         return rows
 
-    def acquire_topic(
-        self, topic_lock_visibility_timeout: int
-    ) -> Optional["TopicLock"]:
+    def acquire_topic(self, topic_lock_visibility_timeout: int) -> Optional["TopicLock"]:
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(SQL_LIST_TOPICS.format(name=self.queue_table))
             topics = list(cur.fetchall())
-            cur.execute(f"LOCK TABLE {self.lock_table} WRITE")
 
             topics.sort(key=lambda x: -x[1])
             new_lock = None
-            for topic, count in topics:
-                try:
-                    cur.execute(
-                        f"INSERT INTO {self.lock_table} (topic, owner_id, visibility_timeout) VALUES (%s, %s, %s)",
-                        args=(topic, self.owner_id, topic_lock_visibility_timeout),
-                    )
-                except Exception:  # XXX
+            for topic_id, _ in topics:
+                result = cur.execute(
+                    f"INSERT INTO {self.lock_table} "
+                    f"(topic, owner_id, expire_time) "
+                    f"VALUES (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(top,new_owner,new_expire) "
+                    f"ON DUPLICATE KEY UPDATE "
+                    f"owner_id=IF(expire_time<CURRENT_TIMESTAMP, new_owner, owner_id), "
+                    f"expire_time=IF(expire_time<CURRENT_TIMESTAMP, new_expire, expire_time) ",
+                    args=(topic_id, self.owner_id, topic_lock_visibility_timeout),
+                )
+                if result == 0:  # set to current values
                     continue
-                new_lock = topic
-                break
+                else:
+                    new_lock = topic_id
+                    break
 
             self.connection.commit()
 
             if new_lock is not None:
-                return TopicLock(new_lock, self)
+                return TopicLock(new_lock, self, topic_lock_visibility_timeout)
             return None
 
     def batch_release_topic(self, topics: Collection[int]) -> None:
@@ -333,34 +311,41 @@ class MySQLBackend(Backend):
             )
             self.connection.commit()
 
-    def batch_touch_topic(self, topics: Collection[int]) -> None:
+    def batch_touch_topic(self, topics: Collection[int], topic_lock_visibility_timeout: int) -> None:
         if len(topics) == 0:
             return
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
                 f"""
-            UPDATE {self.lock_table} SET acquire_time=CURRENT_TIMESTAMP
+            UPDATE {self.lock_table} SET expire_time=TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)
             WHERE topic IN %s AND owner_id = %s
             """,
-                args=(list(topics), self.owner_id),
+                args=(topic_lock_visibility_timeout, list(topics), self.owner_id),
             )
             self.connection.commit()
 
-    def release_stalled_topic_locks(self) -> int:
+    def rate_limit(self, key: bytes, interval_seconds: int) -> bool:
+        if len(key) != self.hash_size:
+            raise ValueError(
+                f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
+            )
         with self.connection.cursor() as cur:
             self.connection.begin()
-            cur.execute(
-                f"""
-            DELETE FROM {self.lock_table} WHERE
-            TIMESTAMPDIFF(SECOND, acquire_time, CURRENT_TIMESTAMP) > visibility_timeout
-            """
+            rows = cur.execute(
+                f"INSERT INTO {self.rate_limit_table} "
+                f"(hash, expire_time) VALUES (%s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b) "
+                f"ON DUPLICATE KEY UPDATE "
+                f"expire_time=IF(expire_time < CURRENT_TIMESTAMP, b, expire_time)",
+                args=(key, interval_seconds),
             )
-            rows = cur.rowcount
             self.connection.commit()
-            return rows
+            if rows == 0:  # no change
+                return False
+            else:
+                return True
 
-    def rate_limit(self, key: bytes, max_events: int, interval_seconds: int) -> bool:
+    def rate_limit_forced(self, key: bytes, interval_seconds: int) -> None:
         if len(key) != self.hash_size:
             raise ValueError(
                 f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
@@ -368,21 +353,10 @@ class MySQLBackend(Backend):
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
-                f"DELETE FROM {self.rate_limit_table} "
-                f"WHERE expire_time < CURRENT_TIMESTAMP"
-            )
-            cur.execute(
-                f"SELECT COUNT(*) FROM {self.rate_limit_table} WHERE hash=%s",
-                args=(key,),
-            )
-            (n,) = cur.fetchone()
-            if n >= max_events:
-                self.connection.commit()
-                return False
-            cur.execute(
                 f"INSERT INTO {self.rate_limit_table} "
-                f"SET hash=%s, expire_time=TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)",
+                f"(hash, expire_time) VALUES (%s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b) "
+                f"ON DUPLICATE KEY UPDATE "
+                f"expire_time=b",
                 args=(key, interval_seconds),
             )
             self.connection.commit()
-            return True

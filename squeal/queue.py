@@ -9,14 +9,14 @@ class Queue:
     """
 
     def __init__(
-        self,
-        backend: Backend,
-        new_message_delay: int = 0,
-        failure_base_delay: int = 1,
-        visibility_timeout: int = 60,
-        topic_lock_visibility_timeout: int = 60 * 15,
-        rate_limit_per_hour: Optional[float] = None,
-        auto_create: bool = True,
+            self,
+            backend: Backend,
+            new_message_delay: int = 0,
+            failure_base_delay: int = 1,
+            visibility_timeout: int = 60,
+            topic_lock_visibility_timeout: int = 60 * 15,
+            rate_limit_per_hour: Optional[float] = None,
+            auto_create: bool = True,
     ):
         self.backend = backend
         self.new_message_delay = new_message_delay
@@ -51,19 +51,19 @@ class Queue:
         return math.ceil(60 * 60 / self.rate_limit_per_hour)
 
     def put(
-        self, item: bytes, topic: int, hsh: Optional[bytes] = None, priority: int = 0
+            self, item: bytes, topic: int, hsh: Optional[bytes] = None, priority: int = 0
     ) -> int:
         return self.batch_put(items=[(item, topic, hsh)], priority=priority)
 
     def batch_put(
-        self, items: Collection[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
+            self, items: Collection[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
     ) -> int:
         interval = self._rate_limit_interval_seconds
         if interval is not None:
             approved_items = []
             for item, topic, hsh in items:
                 if hsh is None or self.backend.rate_limit(
-                    hsh, max_events=1, interval_seconds=interval
+                        hsh, interval_seconds=interval
                 ):
                     approved_items.append((item, topic, hsh))
             items = approved_items
@@ -73,7 +73,6 @@ class Queue:
             priority,
             self.new_message_delay,
             self.failure_base_delay,
-            self.visibility_timeout,
         )
 
     def get(self, topic: int) -> Optional["Message"]:
@@ -82,11 +81,10 @@ class Queue:
 
     def batch_get(self, topics: Iterable[Tuple[int, int]]) -> List["Message"]:
         out = []
-        self.backend.release_stalled_messages()
         for topic, size in topics:
             if size <= 0:
                 continue
-            topic_msgs = self.backend.batch_get(topic, size)
+            topic_msgs = self.backend.batch_get(topic, size, self.visibility_timeout)
             out.extend(topic_msgs)
         for msg in out:
             self._held_messages[msg.idx] = msg
@@ -122,7 +120,6 @@ class Queue:
             del self._held_topics[i]
 
     def acquire_topic(self) -> Optional["TopicLock"]:
-        self.backend.release_stalled_topic_locks()
         topic = self.backend.acquire_topic(
             topic_lock_visibility_timeout=self.topic_lock_visibility_timeout
         )
@@ -145,7 +142,9 @@ class Queue:
 
     def touch_topics(self) -> None:
         self._prune_held_topics()
-        self.backend.batch_touch_topic(self._held_topics.keys())
+        self.backend.batch_touch_topic(
+            self._held_topics.keys(),
+            topic_lock_visibility_timeout=self.topic_lock_visibility_timeout)
 
     def list_held_topics(self) -> List["TopicLock"]:
         self._prune_held_topics()

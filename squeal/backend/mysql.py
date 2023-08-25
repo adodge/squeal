@@ -1,5 +1,5 @@
 import random
-from typing import List, Tuple, Optional, Collection
+from typing import List, Tuple, Optional, Collection, Iterable
 
 from .base import Backend, Message, TopicLock
 
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS {name} (
 SQL_CREATE_RATE_LIMITS = """
 CREATE TABLE IF NOT EXISTS {name} (
     hash BINARY({key_size}) NOT NULL PRIMARY KEY,
+    command_id INT UNSIGNED NOT NULL,
     expire_time TIMESTAMP NOT NULL,
     INDEX (expire_time)
 )
@@ -74,18 +75,6 @@ UPDATE {name}
    SET owner_id=NULL, failure_count = failure_count + 1
    WHERE owner_id=%s AND id IN %s
 """
-
-SQL_BATCH_SELECT = """
-SELECT id, owner_id, payload FROM {name}
-    WHERE (owner_id IS NULL OR expire_time < CURRENT_TIMESTAMP) AND topic=%s AND CURRENT_TIMESTAMP >= delivery_time
-    ORDER BY priority DESC, id ASC
-    LIMIT %s FOR UPDATE SKIP LOCKED;
-"""
-SQL_BATCH_UPDATE = (
-    "UPDATE {name} "
-    "SET owner_id=%s, expire_time=TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP) "
-    "WHERE id IN %s"
-)
 
 # Finish a message
 SQL_ACK = "DELETE FROM {name} WHERE id=%s"
@@ -154,6 +143,7 @@ class MySQLBackend(Backend):
         priority: int,
         delay: int,
         failure_base_delay: int,
+        rate_limit_seconds: Optional[int] = None,
     ) -> int:
         for payload, topic, hsh in data:
             if len(payload) > self.max_payload_size:
@@ -164,6 +154,14 @@ class MySQLBackend(Backend):
                 raise ValueError(
                     f"hsh size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
                 )
+
+        if rate_limit_seconds is not None:
+            allowed = set(
+                self.rate_limit(
+                    [x[2] for x in data], interval_seconds=rate_limit_seconds
+                )
+            )
+            data = [x for x in data if x[2] is None or x[2] in allowed]
 
         with self.connection.cursor() as cur:
             self.connection.begin()
@@ -199,7 +197,14 @@ class MySQLBackend(Backend):
             self.connection.begin()
 
             cur.execute(
-                SQL_BATCH_SELECT.format(name=self.queue_table), args=(topic, size)
+                f"""
+                SELECT id, owner_id, payload FROM {self.queue_table}
+                    WHERE (owner_id IS NULL OR expire_time < CURRENT_TIMESTAMP)
+                        AND topic=%s AND CURRENT_TIMESTAMP >= delivery_time
+                    ORDER BY priority DESC, id ASC
+                    LIMIT %s FOR UPDATE SKIP LOCKED;
+                """,
+                args=(topic, size),
             )
 
             rows = cur.fetchall()
@@ -209,7 +214,9 @@ class MySQLBackend(Backend):
 
             idxes = [x[0] for x in rows]
             cur.execute(
-                SQL_BATCH_UPDATE.format(name=self.queue_table),
+                f"UPDATE {self.queue_table} "
+                f"SET owner_id=%s, expire_time=TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP) "
+                f"WHERE id IN %s",
                 args=(self.owner_id, visibility_timeout, idxes),
             )
 
@@ -333,38 +340,52 @@ class MySQLBackend(Backend):
             )
             self.connection.commit()
 
-    def rate_limit(self, key: bytes, interval_seconds: int) -> bool:
-        if len(key) != self.hash_size:
-            raise ValueError(
-                f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
-            )
+    def rate_limit(self, hshes: Iterable[bytes], interval_seconds: int) -> List[bytes]:
+        n = 0
+        for hsh in hshes:
+            if len(hsh) != self.hash_size:
+                raise ValueError(
+                    f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
+                )
+            n += 1
+
+        command_id = random.randint(0, 2**32 - 1)
+
         with self.connection.cursor() as cur:
             self.connection.begin()
-            rows = cur.execute(
+            input_rows = [(hsh, command_id, interval_seconds) for hsh in hshes]
+            n_rows = cur.executemany(
                 f"INSERT INTO {self.rate_limit_table} "
-                f"(hash, expire_time) VALUES (%s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b) "
+                f"(hash, command_id, expire_time) VALUES "
+                f"  (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b,c) "
                 f"ON DUPLICATE KEY UPDATE "
-                f"expire_time=IF(expire_time < CURRENT_TIMESTAMP, b, expire_time)",
-                args=(key, interval_seconds),
+                f"  command_id=IF(expire_time < CURRENT_TIMESTAMP, b, command_id), "
+                f"  expire_time=IF(expire_time < CURRENT_TIMESTAMP, c, expire_time)",
+                args=input_rows,
             )
             self.connection.commit()
-            if rows == 0:  # no change
-                return False
-            else:
-                return True
+            if n_rows == 0:
+                return []
+            cur.execute(
+                f"SELECT hash FROM {self.rate_limit_table} WHERE hash IN %s AND command_id=%s",
+                args=(list(hshes), command_id),
+            )
+            res = list([x[0] for x in cur.fetchall()])
+            return res
 
-    def rate_limit_forced(self, key: bytes, interval_seconds: int) -> None:
-        if len(key) != self.hash_size:
+    def rate_limit_forced(self, hsh: bytes, interval_seconds: int) -> None:
+        if len(hsh) != self.hash_size:
             raise ValueError(
-                f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
+                f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
             )
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
                 f"INSERT INTO {self.rate_limit_table} "
-                f"(hash, expire_time) VALUES (%s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b) "
+                f"(hash, owner_id, expire_time) VALUES"
+                f"  (%s, %s TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b,c) "
                 f"ON DUPLICATE KEY UPDATE "
-                f"expire_time=b",
-                args=(key, interval_seconds),
+                f"expire_time=c, owner_id=b",
+                args=(hsh, self.owner_id, interval_seconds),
             )
             self.connection.commit()

@@ -42,6 +42,7 @@ class LocalBackend(Backend):
         priority: int,
         delay: int,
         failure_base_delay: int,
+        rate_limit_seconds: Optional[int] = None,
     ) -> int:
         assert self.created
         for payload, topic, hsh in data:
@@ -49,6 +50,14 @@ class LocalBackend(Backend):
                 raise ValueError(
                     f"hsh size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
                 )
+
+        if rate_limit_seconds is not None:
+            allowed = set(
+                self.rate_limit(
+                    [x[2] for x in data], interval_seconds=rate_limit_seconds
+                )
+            )
+            data = [x for x in data if x[2] is None or x[2] in allowed]
 
         constraint_violations = []
         for payload, topic, hsh in data:
@@ -193,22 +202,25 @@ class LocalBackend(Backend):
                 continue
             self.topic_locks[topic] = time.time() + topic_lock_visibility_timeout
 
-    def rate_limit(self, key: bytes, interval_seconds: int) -> bool:
-        if len(key) != self.hash_size:
-            raise ValueError(
-                f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
-            )
+    def rate_limit(self, hshes: Iterable[bytes], interval_seconds: int) -> List[bytes]:
+        for hsh in hshes:
+            if len(hsh) != self.hash_size:
+                raise ValueError(
+                    f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
+                )
 
         now = time.time()
-        if key not in self.rate_limits or self.rate_limits[key] <= now:
-            self.rate_limits[key] = now + interval_seconds
-            return True
-        return False
+        out = []
+        for hsh in hshes:
+            if hsh not in self.rate_limits or self.rate_limits[hsh] <= now:
+                self.rate_limits[hsh] = now + interval_seconds
+                out.append(hsh)
+        return out
 
-    def rate_limit_forced(self, key: bytes, interval_seconds: int) -> None:
-        if len(key) != self.hash_size:
+    def rate_limit_forced(self, hsh: bytes, interval_seconds: int) -> None:
+        if len(hsh) != self.hash_size:
             raise ValueError(
-                f"rate limit key size is not HASH_SIZE ({len(key)} != {self.hash_size})"
+                f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
             )
 
-        self.rate_limits[key] = time.time() + interval_seconds
+        self.rate_limits[hsh] = time.time() + interval_seconds

@@ -1,5 +1,5 @@
 from abc import ABC
-from typing import List, Tuple, Optional, Collection
+from typing import List, Tuple, Optional, Collection, Iterable
 
 
 class Backend(ABC):
@@ -26,6 +26,7 @@ class Backend(ABC):
         priority: int,
         delay: int,
         failure_base_delay: int,
+        rate_limit_seconds: Optional[int] = None,
     ) -> int:
         raise NotImplementedError
 
@@ -62,10 +63,10 @@ class Backend(ABC):
     ) -> None:
         raise NotImplementedError
 
-    def rate_limit(self, key: bytes, interval_seconds: int) -> bool:
+    def rate_limit(self, hshes: Iterable[bytes], interval_seconds: int) -> List[bytes]:
         raise NotImplementedError
 
-    def rate_limit_forced(self, key: bytes, interval_seconds: int) -> None:
+    def rate_limit_forced(self, hsh: bytes, interval_seconds: int) -> None:
         raise NotImplementedError
 
 

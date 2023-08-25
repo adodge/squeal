@@ -331,22 +331,22 @@ class TestBackend:
     def test_rate_limiting(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             key = b"0" * bk.hash_size
-            assert bk.rate_limit(key, interval_seconds=60)
-            assert not bk.rate_limit(key, interval_seconds=60)
+            assert bk.rate_limit([key], interval_seconds=60) == [key]
+            assert bk.rate_limit([key], interval_seconds=60) == []
 
     def test_rate_limiting_expires(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             key = b"0" * bk.hash_size
-            assert bk.rate_limit(key, interval_seconds=1)
-            assert not bk.rate_limit(key, interval_seconds=1)
+            assert bk.rate_limit([key], interval_seconds=1) == [key]
+            assert bk.rate_limit([key], interval_seconds=1) == []
 
             time.sleep(2)
 
-            assert bk.rate_limit(key, interval_seconds=1)
-            assert not bk.rate_limit(key, interval_seconds=1)
+            assert bk.rate_limit([key], interval_seconds=1) == [key]
+            assert bk.rate_limit([key], interval_seconds=1) == []
 
     def test_rate_limiting_bad_key(self, backend_class: Type[TemporaryBackendMixin]):
         with backend_class() as bk:
             key = b"0" * bk.hash_size + b"0"
             with pytest.raises(ValueError):
-                assert bk.rate_limit(key, interval_seconds=60)
+                bk.rate_limit([key], interval_seconds=60)

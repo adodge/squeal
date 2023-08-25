@@ -58,21 +58,12 @@ class Queue:
     def batch_put(
         self, items: Collection[Tuple[bytes, int, Optional[bytes]]], priority: int = 0
     ) -> int:
-        interval = self._rate_limit_interval_seconds
-        if interval is not None:
-            approved_items = []
-            for item, topic, hsh in items:
-                if hsh is None or self.backend.rate_limit(
-                    hsh, interval_seconds=interval
-                ):
-                    approved_items.append((item, topic, hsh))
-            items = approved_items
-
         return self.backend.batch_put(
             items,
             priority,
             self.new_message_delay,
             self.failure_base_delay,
+            rate_limit_seconds=self._rate_limit_interval_seconds,
         )
 
     def get(self, topic: int) -> Optional["Message"]:

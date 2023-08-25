@@ -54,7 +54,8 @@ class LocalBackend(Backend):
         if rate_limit_seconds is not None:
             allowed = set(
                 self.rate_limit(
-                    [x[2] for x in data], interval_seconds=rate_limit_seconds
+                    [x[2] for x in data if x[2] is not None],
+                    interval_seconds=rate_limit_seconds,
                 )
             )
             data = [x for x in data if x[2] is None or x[2] in allowed]

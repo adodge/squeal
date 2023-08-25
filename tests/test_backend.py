@@ -350,3 +350,50 @@ class TestBackend:
             key = b"0" * bk.hash_size + b"0"
             with pytest.raises(ValueError):
                 bk.rate_limit([key], interval_seconds=60)
+
+    def test_batch_put_with_rate_limit(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            assert 3 == bk.batch_put(
+                data=[
+                    (b"a", 1, b"0" * bk.hash_size),
+                    (b"b", 1, b"1" * bk.hash_size),
+                    (b"c", 1, b"2" * bk.hash_size),
+                ],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                rate_limit_seconds=5,
+            )
+            assert 3 == bk.get_topic_size(topic=1)
+            msgs = bk.batch_get(1, 3, 60)
+            assert len(msgs) == 3
+            for msg in msgs:
+                msg.ack()
+            assert 0 == bk.get_topic_size(topic=1)
+
+            assert 0 == bk.batch_put(
+                data=[
+                    (b"a", 1, b"0" * bk.hash_size),
+                    (b"b", 1, b"1" * bk.hash_size),
+                    (b"c", 1, b"2" * bk.hash_size),
+                ],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                rate_limit_seconds=5,
+            )
+            assert 0 == bk.get_topic_size(topic=1)
+
+    def test_batch_put_with_rate_limit_but_no_hash(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            assert 1 == bk.batch_put(
+                data=[(b"a", 1, None)],
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+                rate_limit_seconds=5,
+            )

@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS {name} (
     expire_time TIMESTAMP NULL,
     payload VARBINARY({size}),
     PRIMARY KEY (id),
-    UNIQUE (topic, hash),
+    UNIQUE (hash),
     INDEX (topic, delivery_time)
 )
 """
@@ -152,41 +152,46 @@ class MySQLBackend(Backend):
                 )
             if hsh is not None and len(hsh) != self.hash_size:
                 raise ValueError(
-                    f"hsh size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
+                    f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
                 )
 
         if rate_limit_seconds is not None:
             allowed = set(
                 self.rate_limit(
-                    [x[2] for x in data], interval_seconds=rate_limit_seconds
+                    [x[2] for x in data if x[2] is not None],
+                    interval_seconds=rate_limit_seconds,
                 )
             )
             data = [x for x in data if x[2] is None or x[2] in allowed]
 
+        no_hash_rows = [
+            (payload, topic, priority, delay, failure_base_delay)
+            for payload, topic, hsh in data
+            if hsh is None
+        ]
+        hash_rows = [
+            (payload, topic, hsh, priority, delay, failure_base_delay)
+            for payload, topic, hsh in data
+            if hsh is not None
+        ]
+
         with self.connection.cursor() as cur:
             self.connection.begin()
-            rows = [
-                (
-                    payload,
-                    topic,
-                    hsh,
-                    priority,
-                    delay,
-                    failure_base_delay,
-                )
-                for payload, topic, hsh in data
-            ]
             total = 0
-            for row in rows:
-                try:
-                    cur.execute(
-                        SQL_INSERT.format(name=self.queue_table),
-                        args=row,
-                    )
-                    total += cur.rowcount
-                except Exception as err:
-                    if err.__class__.__name__ != "IntegrityError":
-                        raise
+            if no_hash_rows:
+                total += cur.executemany(
+                    f"INSERT INTO {self.queue_table} "
+                    f"(payload, topic, priority, delivery_time, failure_base_delay) "
+                    f"VALUES (%s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP), %s) ",
+                    args=no_hash_rows,
+                )
+            if hash_rows:
+                total += cur.executemany(
+                    f"INSERT IGNORE INTO {self.queue_table} "
+                    f"(payload, topic, hash, priority, delivery_time, failure_base_delay) "
+                    f"VALUES (%s, %s, %s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP), %s)",
+                    args=hash_rows,
+                )
             self.connection.commit()
             return total
 
@@ -340,14 +345,16 @@ class MySQLBackend(Backend):
             )
             self.connection.commit()
 
-    def rate_limit(self, hshes: Iterable[bytes], interval_seconds: int) -> List[bytes]:
-        n = 0
+    def rate_limit(
+        self, hshes: Collection[bytes], interval_seconds: int
+    ) -> List[bytes]:
+        if not hshes:
+            return []
         for hsh in hshes:
             if len(hsh) != self.hash_size:
                 raise ValueError(
                     f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
                 )
-            n += 1
 
         command_id = random.randint(0, 2**32 - 1)
 
@@ -386,6 +393,6 @@ class MySQLBackend(Backend):
                 f"  (%s, %s TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b,c) "
                 f"ON DUPLICATE KEY UPDATE "
                 f"expire_time=c, owner_id=b",
-                args=(hsh, self.owner_id, interval_seconds),
+                args=(hsh, 0, interval_seconds),
             )
             self.connection.commit()

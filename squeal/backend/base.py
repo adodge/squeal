@@ -1,10 +1,39 @@
 from abc import ABC
 from typing import List, Tuple, Optional, Collection, Iterable
 
+PUT_RECORD_COLLECTION = Collection[Tuple[bytes, int, Optional[bytes]]]
+
 
 class Backend(ABC):
-    def __init__(self, *args, **kwargs):
-        pass
+    def validate_payloads(self, payloads: Iterable[bytes]):
+        if self.max_payload_size is None:
+            return
+        for payload in payloads:
+            if len(payload) > self.max_payload_size:
+                raise ValueError(
+                    f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {self.max_payload_size})"
+                )
+
+    def validate_hashes(self, hashes: Iterable[Optional[bytes]]) -> None:
+        for hsh in hashes:
+            if hsh is not None and len(hsh) != self.hash_size:
+                raise ValueError(
+                    f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
+                )
+
+    def filter_by_rate_limit(
+        self, data: PUT_RECORD_COLLECTION, rate_limit_seconds: Optional[int] = None
+    ) -> PUT_RECORD_COLLECTION:
+        if rate_limit_seconds is None:
+            return data
+
+        allowed = set(
+            self.rate_limit(
+                [x[2] for x in data if x[2] is not None],
+                interval_seconds=rate_limit_seconds,
+            )
+        )
+        return [x for x in data if x[2] is None or x[2] in allowed]
 
     @property
     def max_payload_size(self) -> Optional[int]:
@@ -22,7 +51,7 @@ class Backend(ABC):
 
     def batch_put(
         self,
-        data: Collection[Tuple[bytes, int, Optional[bytes]]],
+        data: PUT_RECORD_COLLECTION,
         priority: int,
         delay: int,
         failure_base_delay: int,
@@ -66,7 +95,9 @@ class Backend(ABC):
     def rate_limit(self, hshes: Iterable[bytes], interval_seconds: int) -> List[bytes]:
         raise NotImplementedError
 
-    def rate_limit_forced(self, hsh: bytes, interval_seconds: int) -> None:
+    def override_rate_limit(
+        self, hshes: Collection[bytes], interval_seconds: int
+    ) -> None:
         raise NotImplementedError
 
 
@@ -93,14 +124,20 @@ class TopicLock:
 
 
 class Message:
-    FIELDS = ["payload", "idx", "backend", "status"]
+    FIELDS = ["payload", "idx", "backend", "visibility_timeout", "status"]
 
     def __init__(
-        self, payload: bytes, idx: int, backend: Backend, status: Optional[bool] = None
+        self,
+        payload: bytes,
+        idx: int,
+        backend: Backend,
+        visibility_timeout: int,
+        status: Optional[bool] = None,
     ):
         self.payload = payload
         self.idx = idx
         self.backend = backend
+        self.visibility_timeout = visibility_timeout
         self.status = status
 
     def __enter__(self):
@@ -129,7 +166,7 @@ class Message:
     def touch(self):
         if self.released:
             raise RuntimeError("Message has already been relinquished")
-        self.backend.batch_touch([self.idx])
+        self.backend.batch_touch([self.idx], visibility_timeout=self.visibility_timeout)
 
     def check(self) -> bool:
         """

@@ -1,4 +1,7 @@
-build:
+format:
+	black .
+
+build: format
 	python3 -m build
 
 upload: build

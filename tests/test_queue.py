@@ -11,6 +11,12 @@ from .common import TemporaryMySQLBackend, TemporaryLocalBackend, TemporaryBacke
     "backend_class", [TemporaryMySQLBackend, TemporaryLocalBackend]
 )
 class TestMySQLQueue:
+    def test_queue_create_destroy(self, backend_class: Type[TemporaryBackendMixin]):
+        bk = backend_class()
+        q = Queue(bk)
+        q.create()
+        q.destroy()
+
     def test_queue_topics_dont_interfere(
         self, backend_class: Type[TemporaryBackendMixin]
     ):

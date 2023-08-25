@@ -397,3 +397,27 @@ class TestBackend:
                 failure_base_delay=0,
                 rate_limit_seconds=5,
             )
+
+    def test_rate_limiting_override(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            key = b"0" * bk.hash_size
+            assert bk.rate_limit([key], interval_seconds=60) == [key]
+            assert bk.rate_limit([key], interval_seconds=60) == []
+            bk.override_rate_limit([key], interval_seconds=1)
+
+            time.sleep(2)
+
+            assert bk.rate_limit([key], interval_seconds=60) == [key]
+            assert bk.rate_limit([key], interval_seconds=60) == []
+
+    def test_rate_limiting_override_clear(
+        self, backend_class: Type[TemporaryBackendMixin]
+    ):
+        with backend_class() as bk:
+            key = b"0" * bk.hash_size
+            assert bk.rate_limit([key], interval_seconds=60) == [key]
+            assert bk.rate_limit([key], interval_seconds=60) == []
+            bk.override_rate_limit([key], interval_seconds=0)
+
+            assert bk.rate_limit([key], interval_seconds=60) == [key]
+            assert bk.rate_limit([key], interval_seconds=60) == []

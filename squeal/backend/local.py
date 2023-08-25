@@ -1,8 +1,7 @@
 import time
 from collections import Counter
 from typing import List, Tuple, Iterable, Optional, Collection
-
-from .base import Backend, Message, TopicLock
+from .base import Backend, Message, TopicLock, PUT_RECORD_COLLECTION
 
 
 class LocalBackend(Backend):
@@ -12,23 +11,20 @@ class LocalBackend(Backend):
     """
 
     def __init__(self):
-        super().__init__()
         self.messages = []
         self.topic_locks = {}
         self.rate_limits = {}
         self.unique_constraint = set()
         self.next_id = 0
         self.created = False
-        self._max_payload_size = None
-        self._hash_size = 16
 
     @property
     def max_payload_size(self) -> Optional[int]:
-        return self._max_payload_size
+        return None
 
     @property
     def hash_size(self) -> int:
-        return self._hash_size
+        return 16
 
     def create(self) -> None:
         self.created = True
@@ -38,27 +34,17 @@ class LocalBackend(Backend):
 
     def batch_put(
         self,
-        data: Collection[Tuple[bytes, int, Optional[bytes]]],
+        data: PUT_RECORD_COLLECTION,
         priority: int,
         delay: int,
         failure_base_delay: int,
         rate_limit_seconds: Optional[int] = None,
     ) -> int:
         assert self.created
-        for payload, topic, hsh in data:
-            if hsh is not None and len(hsh) != self.hash_size:
-                raise ValueError(
-                    f"hsh size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
-                )
+        self.validate_hashes([x[2] for x in data])
+        self.validate_payloads([x[0] for x in data])
 
-        if rate_limit_seconds is not None:
-            allowed = set(
-                self.rate_limit(
-                    [x[2] for x in data if x[2] is not None],
-                    interval_seconds=rate_limit_seconds,
-                )
-            )
-            data = [x for x in data if x[2] is None or x[2] in allowed]
+        data = self.filter_by_rate_limit(data, rate_limit_seconds)
 
         constraint_violations = []
         for payload, topic, hsh in data:
@@ -105,7 +91,14 @@ class LocalBackend(Backend):
 
             msg["acquired"] = True
             msg["expire_time"] = now + visibility_timeout
-            output.append(Message(msg["payload"], msg["id"], self))
+            output.append(
+                Message(
+                    msg["payload"],
+                    msg["id"],
+                    self,
+                    visibility_timeout=visibility_timeout,
+                )
+            )
         return output
 
     def ack(self, task_id: int) -> None:
@@ -204,11 +197,7 @@ class LocalBackend(Backend):
             self.topic_locks[topic] = time.time() + topic_lock_visibility_timeout
 
     def rate_limit(self, hshes: Iterable[bytes], interval_seconds: int) -> List[bytes]:
-        for hsh in hshes:
-            if len(hsh) != self.hash_size:
-                raise ValueError(
-                    f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
-                )
+        self.validate_hashes(hshes)
 
         now = time.time()
         out = []
@@ -218,10 +207,14 @@ class LocalBackend(Backend):
                 out.append(hsh)
         return out
 
-    def rate_limit_forced(self, hsh: bytes, interval_seconds: int) -> None:
-        if len(hsh) != self.hash_size:
-            raise ValueError(
-                f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
-            )
+    def override_rate_limit(
+        self, hshes: Collection[bytes], interval_seconds: int
+    ) -> None:
+        self.validate_hashes(hshes)
 
-        self.rate_limits[hsh] = time.time() + interval_seconds
+        if interval_seconds > 0:
+            for hsh in hshes:
+                self.rate_limits[hsh] = time.time() + interval_seconds
+        else:
+            for hsh in hshes:
+                self.rate_limits.pop(hsh, 0)

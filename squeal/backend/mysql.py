@@ -1,7 +1,7 @@
 import random
 from typing import List, Tuple, Optional, Collection, Iterable
 
-from .base import Backend, Message, TopicLock
+from .base import Backend, Message, TopicLock, PUT_RECORD_COLLECTION
 
 # Create a table to store queue items
 # format args:
@@ -91,17 +91,39 @@ SELECT topic, count(*) FROM {name}
 
 
 class MySQLBackend(Backend):
-    def __init__(self, connection, prefix: str):
+    def __init__(
+        self, connection, prefix: str, garbage_collection_interval: int = 1000
+    ):
         """
         :param connection: https://peps.python.org/pep-0249/#connection-objects
         """
-        super().__init__()
         self.connection = connection
         self.prefix = prefix
         self.queue_table = f"{self.prefix}_queue"
         self.lock_table = f"{self.prefix}_lock"
         self.rate_limit_table = f"{self.prefix}_limits"
         self.owner_id = random.randint(0, 2**32 - 1)
+        self.garbage_collection_interval = garbage_collection_interval
+        self.garbage_collection_action_count = random.randint(
+            0, garbage_collection_interval - 1
+        )
+
+    def _gc_increment(self, n: int):
+        self.garbage_collection_action_count += n
+        if self.garbage_collection_action_count >= self.garbage_collection_interval:
+            self._gc()
+
+    def _gc(self):
+        self.garbage_collection_action_count = 0
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(
+                f"DELETE FROM {self.lock_table} WHERE expire_time < CURRENT_TIMESTAMP"
+            )
+            cur.execute(
+                f"DELETE FROM {self.rate_limit_table} WHERE expire_time < CURRENT_TIMESTAMP"
+            )
+            self.connection.commit()
 
     @property
     def max_payload_size(self) -> Optional[int]:
@@ -139,30 +161,15 @@ class MySQLBackend(Backend):
 
     def batch_put(
         self,
-        data: Collection[Tuple[bytes, int, Optional[bytes]]],
+        data: PUT_RECORD_COLLECTION,
         priority: int,
         delay: int,
         failure_base_delay: int,
         rate_limit_seconds: Optional[int] = None,
     ) -> int:
-        for payload, topic, hsh in data:
-            if len(payload) > self.max_payload_size:
-                raise ValueError(
-                    f"payload exceeds PAYLOAD_MAX_SIZE ({len(payload)} > {self.max_payload_size})"
-                )
-            if hsh is not None and len(hsh) != self.hash_size:
-                raise ValueError(
-                    f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
-                )
-
-        if rate_limit_seconds is not None:
-            allowed = set(
-                self.rate_limit(
-                    [x[2] for x in data if x[2] is not None],
-                    interval_seconds=rate_limit_seconds,
-                )
-            )
-            data = [x for x in data if x[2] is None or x[2] in allowed]
+        self.validate_hashes([x[2] for x in data])
+        self.validate_payloads([x[0] for x in data])
+        data = self.filter_by_rate_limit(data, rate_limit_seconds)
 
         no_hash_rows = [
             (payload, topic, priority, delay, failure_base_delay)
@@ -193,7 +200,7 @@ class MySQLBackend(Backend):
                     args=hash_rows,
                 )
             self.connection.commit()
-            return total
+        return total
 
     def batch_get(
         self, topic: int, size: int, visibility_timeout: int
@@ -227,7 +234,10 @@ class MySQLBackend(Backend):
 
             self.connection.commit()
 
-        return [Message(x[2], x[0], self) for x in rows]
+        return [
+            Message(x[2], x[0], self, visibility_timeout=visibility_timeout)
+            for x in rows
+        ]
 
     def ack(self, task_id: int) -> None:
         with self.connection.cursor() as cur:
@@ -287,6 +297,7 @@ class MySQLBackend(Backend):
     def acquire_topic(
         self, topic_lock_visibility_timeout: int
     ) -> Optional["TopicLock"]:
+        self._gc_increment(1)
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(SQL_LIST_TOPICS.format(name=self.queue_table))
@@ -319,6 +330,7 @@ class MySQLBackend(Backend):
     def batch_release_topic(self, topics: Collection[int]) -> None:
         if len(topics) == 0:
             return
+        self._gc_increment(len(topics))
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
@@ -334,6 +346,7 @@ class MySQLBackend(Backend):
     ) -> None:
         if len(topics) == 0:
             return
+        self._gc_increment(len(topics))
         with self.connection.cursor() as cur:
             self.connection.begin()
             cur.execute(
@@ -350,11 +363,8 @@ class MySQLBackend(Backend):
     ) -> List[bytes]:
         if not hshes:
             return []
-        for hsh in hshes:
-            if len(hsh) != self.hash_size:
-                raise ValueError(
-                    f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
-                )
+        self.validate_hashes(hshes)
+        self._gc_increment(len(hshes))
 
         command_id = random.randint(0, 2**32 - 1)
 
@@ -380,19 +390,31 @@ class MySQLBackend(Backend):
             res = list([x[0] for x in cur.fetchall()])
             return res
 
-    def rate_limit_forced(self, hsh: bytes, interval_seconds: int) -> None:
-        if len(hsh) != self.hash_size:
-            raise ValueError(
-                f"hash size is not HASH_SIZE ({len(hsh)} != {self.hash_size})"
-            )
-        with self.connection.cursor() as cur:
-            self.connection.begin()
-            cur.execute(
-                f"INSERT INTO {self.rate_limit_table} "
-                f"(hash, owner_id, expire_time) VALUES"
-                f"  (%s, %s TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b,c) "
-                f"ON DUPLICATE KEY UPDATE "
-                f"expire_time=c, owner_id=b",
-                args=(hsh, 0, interval_seconds),
-            )
-            self.connection.commit()
+    def override_rate_limit(
+        self, hshes: Collection[bytes], interval_seconds: int
+    ) -> None:
+        if not hshes:
+            return
+        self.validate_hashes(hshes)
+        self._gc_increment(len(hshes))
+
+        if interval_seconds > 0:
+            with self.connection.cursor() as cur:
+                self.connection.begin()
+                cur.executemany(
+                    f"INSERT INTO {self.rate_limit_table} "
+                    f"(hash, command_id, expire_time) VALUES"
+                    f"  (%s, %s, TIMESTAMPADD(SECOND, %s, CURRENT_TIMESTAMP)) as new(a,b,c) "
+                    f"ON DUPLICATE KEY UPDATE "
+                    f"expire_time=c, command_id=b",
+                    args=[(hsh, 0, interval_seconds) for hsh in hshes],
+                )
+                self.connection.commit()
+        else:
+            with self.connection.cursor() as cur:
+                self.connection.begin()
+                cur.execute(
+                    f"DELETE FROM {self.rate_limit_table} " f"WHERE hash IN %s",
+                    args=list([(x,) for x in hshes]),
+                )
+                self.connection.commit()

@@ -101,6 +101,15 @@ class Queue:
                 msg.status = False
         self._held_messages.clear()
 
+    def soft_nack_all(self) -> None:
+        # XXX
+        self._prune_held_messages()
+        self.backend.batch_soft_nack(self._held_messages.keys())
+        for msg in self._held_messages.values():
+            if msg.status is None:
+                msg.status = False
+        self._held_messages.clear()
+
     def list_topics(self) -> List[Tuple[int, int]]:
         return self.backend.list_topics()
 

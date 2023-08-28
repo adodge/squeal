@@ -129,7 +129,18 @@ class LocalBackend(Backend):
             delay = msg["failure_base_delay"] * (2 ** msg["failure_count"])
             msg["failure_count"] += 1
             msg["delivery_time"] = time.time() + delay
-            print(delay)
+
+    def batch_soft_nack(self, task_ids: Collection[int]) -> None:
+        assert self.created
+        to_nack = set(task_ids)
+        for idx, msg in enumerate(self.messages):
+            if msg["id"] not in to_nack:
+                continue
+            if not msg["acquired"]:
+                continue
+
+            msg["acquired"] = False
+            msg["delivery_time"] = time.time()
 
     def batch_touch(self, task_ids: Collection[int], visibility_timeout: int) -> None:
         assert self.created

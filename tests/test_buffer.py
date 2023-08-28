@@ -74,3 +74,26 @@ class TestBuffer:
 
             msg2 = buf.get()
             assert msg2 is None
+
+    def test_half_ack(self, backend_class: Type[TemporaryBackendMixin]):
+        with backend_class() as bk:
+            bk.batch_put(
+                [(b"a", 1, None)] * 3,
+                priority=0,
+                delay=0,
+                failure_base_delay=0,
+            )
+            buf = Buffer(Queue(bk), default_topic_quota=1, extra_buffer_multiplier=1)
+
+            msg = buf.get()
+            assert msg is not None
+            assert buf.get() is None
+
+            msg.half_ack()
+
+            msg2 = buf.get()
+            assert msg2 is not None
+
+            assert 1 == buf.get_topic_size(1)
+            msg.nack()
+            assert 2 == buf.get_topic_size(1)

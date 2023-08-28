@@ -75,6 +75,11 @@ UPDATE {name}
    SET owner_id=NULL, failure_count = failure_count + 1
    WHERE owner_id=%s AND id IN %s
 """
+SQL_BATCH_SOFT_NACK = """
+UPDATE {name}
+   SET owner_id=NULL, delivery_time=CURRENT_TIMESTAMP
+   WHERE owner_id=%s AND id IN %s
+"""
 
 # Finish a message
 SQL_ACK = "DELETE FROM {name} WHERE id=%s"
@@ -257,6 +262,18 @@ class MySQLBackend(Backend):
             )
             cur.execute(
                 SQL_BATCH_NACK_2.format(name=self.queue_table),
+                args=(self.owner_id, list(task_ids)),
+            )
+            # TODO raise if it's already expired
+            self.connection.commit()
+
+    def batch_soft_nack(self, task_ids: Collection[int]) -> None:
+        if len(task_ids) == 0:
+            return
+        with self.connection.cursor() as cur:
+            self.connection.begin()
+            cur.execute(
+                SQL_BATCH_SOFT_NACK.format(name=self.queue_table),
                 args=(self.owner_id, list(task_ids)),
             )
             # TODO raise if it's already expired

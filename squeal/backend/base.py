@@ -67,6 +67,9 @@ class Backend(ABC):
     ) -> List["Message"]:
         raise NotImplementedError
 
+    def batch_soft_nack(self, task_ids: Collection[int]) -> None:
+        raise NotImplementedError
+
     def batch_nack(self, task_ids: Collection[int]) -> None:
         raise NotImplementedError
 
@@ -162,6 +165,12 @@ class Message:
             raise RuntimeError("Message has already been relinquished")
         self.status = False
         self.backend.batch_nack([self.idx])
+
+    def soft_nack(self):
+        if self.released:
+            raise RuntimeError("Message has already been relinquished")
+        self.status = False
+        self.backend.batch_soft_nack([self.idx])
 
     def touch(self):
         if self.released:

@@ -1,3 +1,4 @@
+import time
 from typing import Optional, Dict, List, Any, Generator
 
 from squeal.backend.base import Message
@@ -13,6 +14,7 @@ class BufferMessage(Message):
     def __init__(self, *args, buffer: "Buffer", **kwargs):
         super().__init__(*args, **kwargs)
         self.buffer = buffer
+        self.half_acked = False
 
     @classmethod
     def from_message(cls, msg: Message, *args, **kwargs) -> "BufferMessage":
@@ -21,11 +23,26 @@ class BufferMessage(Message):
 
     def ack(self):
         super().ack()
-        self.buffer.ack(self.idx)
+        if not self.half_acked:
+            self.buffer.ack_nack(self.idx)
 
     def nack(self):
         super().nack()
-        self.buffer.nack(self.idx)
+        if not self.half_acked:
+            self.buffer.ack_nack(self.idx)
+
+    def soft_nack(self):
+        super().soft_nack()
+        if not self.half_acked:
+            self.buffer.ack_nack(self.idx)
+
+    def half_ack(self):
+        # Remove this from the "processing" count in the buffer, but don't actually ack it in the queue
+        # Used when we've finished the part of the processing that we want concurrency limits on (e.g. downloading a
+        # webpage) but we have more processing that we want to do before we can say the task is complete.
+        if not self.half_acked:
+            self.half_acked = True
+            self.buffer.ack_nack(self.idx)
 
 
 class Buffer:
@@ -34,14 +51,18 @@ class Buffer:
         queue: Queue,
         extra_buffer_multiplier: int = 2,
         default_topic_quota: int = 1,
+        max_topic_idle: int = 10,
     ):
         self.queue = queue
 
         self.topic_buffer: Dict[int, List[Message]] = {}
         self.extra_buffer_multiplier = extra_buffer_multiplier
         self.default_topic_quota: int = default_topic_quota
+        self.max_topic_idle: int = max_topic_idle
+
         self.topic_quota: Dict[int, int] = {}
         self.topic_processing: Dict[int, int] = {}
+        self.topic_last_get: Dict[int, float] = {}
         self.message_topic: Dict[int, int] = {}
 
         self.closed = False
@@ -64,54 +85,24 @@ class Buffer:
         quota = self.topic_quota[idx]
         processing = self.topic_processing[idx]
         if held - processing >= quota:
-            logger.debug(
-                lm(
-                    "Buffer._fill_buffer()",
-                    {
-                        "action": "none",
-                        "idx": idx,
-                        "n_held": held,
-                        "n_quota": quota,
-                        "n_processing": processing,
-                    },
-                )
-            )
             return
         target = self.extra_buffer_multiplier * quota - held + processing
         msgs = self.queue.batch_get([(idx, target)])
         self.topic_buffer[idx].extend(msgs)
-        logger.debug(
-            lm(
-                "Buffer._fill_buffer()",
-                {
-                    "action": "get",
-                    "idx": idx,
-                    "n_held": held,
-                    "n_quota": quota,
-                    "n_processing": processing,
-                    "target": target,
-                    "new_msgs": len(msgs),
-                },
-            )
-        )
+
+    def get_topic_size(self, idx: int) -> int:
+        held = len(self.topic_buffer[idx])
+        server = self.queue.get_topic_size(idx)
+        return held + server
 
     def _acquire_topic(self) -> bool:
         topic = self.queue.acquire_topic()
         if topic is None:
-            logger.debug(lm("Buffer._acquire_topic()", {"result": "failure"}))
             return False
         self.topic_quota[topic.idx] = self.default_topic_quota
         self.topic_processing[topic.idx] = 0
         self.topic_buffer[topic.idx] = []
-        logger.debug(
-            lm(
-                "Buffer._acquire_topic()",
-                {
-                    "result": "success",
-                    "topic_id": topic.idx,
-                },
-            )
-        )
+        self.topic_last_get[topic.idx] = time.time()
         self._fill_buffer(topic.idx)
         return True
 
@@ -119,20 +110,14 @@ class Buffer:
         if self.topic_processing[topic] > 0:
             raise RuntimeError
 
-        logger.debug(
-            lm(
-                "Buffer._drop_topic()",
-                {"topic_id": topic, "buffer_size": len(self.topic_buffer[topic])},
-            )
-        )
-
         for msg in self.topic_buffer[topic]:
-            msg.nack()
+            msg.soft_nack()
         self.queue.release_topic(topic)
 
         del self.topic_buffer[topic]
         del self.topic_processing[topic]
         del self.topic_quota[topic]
+        del self.topic_last_get[topic]
 
     def _fill_buffers(self) -> None:
         # Check all the checked-out topics and make sure we have messages in the buffer
@@ -146,8 +131,11 @@ class Buffer:
             if self.topic_buffer[topic] and allowed > 0:
                 need_new_topic = False
 
-            if self.topic_processing[topic] == 0 and not self.topic_buffer[topic]:
-                self._drop_topic(topic)
+            if self.topic_processing[topic] == 0:
+                if not self.topic_buffer[topic]:
+                    self._drop_topic(topic)
+                elif time.time() - self.topic_last_get[topic] > self.max_topic_idle:
+                    self._drop_topic(topic)
 
         if need_new_topic:
             self._acquire_topic()
@@ -163,17 +151,6 @@ class Buffer:
             p = self.topic_processing[topic]
             b = len(self.topic_buffer[topic])
             allowed = q - p
-            logger.debug(
-                lm(
-                    "Buffer.get() topic",
-                    {
-                        "topic_id": topic,
-                        "n_held": b,
-                        "n_quota": q,
-                        "n_processing": p,
-                    },
-                )
-            )
             if allowed <= 0 or b == 0:
                 continue
 
@@ -181,48 +158,15 @@ class Buffer:
             self.message_topic[msg.idx] = topic
             self.topic_processing[topic] += 1
             out = BufferMessage.from_message(msg, buffer=self)
+            self.topic_last_get[topic] = time.time()
             break
-        logger.debug(
-            lm(
-                "Buffer.get() result",
-                {
-                    "success": ("true" if out is not None else "false"),
-                },
-            )
-        )
         return out
 
-    def ack(self, message_idx: int) -> None:
+    def ack_nack(self, message_idx: int) -> None:
         if self.closed:
             raise RuntimeError
-        topic = self.message_topic[message_idx]
+        topic = self.message_topic.pop(message_idx)
         self.topic_processing[topic] -= 1
-
-        logger.debug(
-            lm(
-                "Buffer.ack()",
-                {
-                    "topic_id": topic,
-                    "n_processing": self.topic_processing[topic],
-                },
-            )
-        )
-
-    def nack(self, message_idx: int) -> None:
-        if self.closed:
-            raise RuntimeError
-        topic = self.message_topic[message_idx]
-        self.topic_processing[topic] -= 1
-
-        logger.debug(
-            lm(
-                "Buffer.nack()",
-                {
-                    "topic_id": topic,
-                    "n_processing": self.topic_processing[topic],
-                },
-            )
-        )
 
     def __iter__(self) -> Generator[BufferMessage, Any, None]:
         while True:

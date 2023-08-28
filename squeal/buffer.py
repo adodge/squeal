@@ -40,7 +40,7 @@ class BufferMessage(Message):
         # Remove this from the "processing" count in the buffer, but don't actually ack it in the queue
         # Used when we've finished the part of the processing that we want concurrency limits on (e.g. downloading a
         # webpage) but we have more processing that we want to do before we can say the task is complete.
-        if not self.half_acked:
+        if not self.half_acked and not self.released:
             self.half_acked = True
             self.buffer.ack_nack(self.idx)
 
